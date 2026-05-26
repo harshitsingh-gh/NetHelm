@@ -72,13 +72,15 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 > **Recommended schedule:** Mon/Wed/Fri evenings 1.5 hr each (4.5 hr) + Sat morning 3 hr + Sun morning 3 hr = 10.5 hr/wk. Math gets Tue/Thu eve + Sat afternoon + Sun afternoon.
 > **Holiday handling:** Jul 4 (Sat) is a no-work day; absorb the lost 3 hr into Sun.
 
-### Week 2 (Jun 1 – Jun 7) — Reproduce NetConfBench
+### Week 2 (Jun 1 – Jun 7) — Reproduce NetConfEval
 
-- **Mon/Wed/Fri (4.5 hr):** Clone `nobrowning/draft_llm_conf_benchmark`. Set up its env. Run the smallest task end-to-end against GPT-4o (use your personal API key; you'll switch to a shared budget once it's reproducible).
-- **Sat (3 hr):** Run all 40 NetConfBench tasks against GPT-4o single-shot. Capture results to `runs/2026-06-07_netconfbench_gpt4o.json`. Note: this will cost money — budget ~$30; if more, debug.
-- **Sun (3 hr):** Read their grading code. Document in `harness/grader_notes/netconfbench.md` what the three metrics actually compute (don't trust the paper, read the code). Identify what you'll have to re-implement to normalize against Cornetto's grader.
+> **Plan correction (2026-05-24):** the original Week 2 target was NetConfBench, but `nobrowning/draft_llm_conf_benchmark` is an IETF draft with no code (see [../../reading/01b_netconfbench_code_skim.md](../../reading/01b_netconfbench_code_skim.md)). The runnable config-gen benchmark we actually want is **NetConfEval** (RedHatResearch/conext24-NetConfEval, CoNEXT'24). NetConfBench remains a citation/taxonomy source only.
 
-**Deliverable:** NetConfBench reproduces on your box, all 40 tasks; grader internals documented.
+- **Mon/Wed/Fri (4.5 hr):** Clone `RedHatResearch/conext24-NetConfEval`. Set up its env (Python ≥3.10, `requirements.txt`). Pull the HF dataset `NetConfEval/NetConfEval`. Run `step_1_formal_spec_translation.py` against GPT-4o on a single policy type, `--batch_size 1`, `--n_run 1` to confirm the loop works end-to-end.
+- **Sat (3 hr):** Run all three step-1 / step-2 experiments (formal-spec, function-call, code-gen) against GPT-4o with `--n_runs 1` across the full policy set. Save outputs under `runs/2026-06-07_netconfeval_gpt4o/`. Step-3 (low-level configs, requires Docker + Kathará) is **deferred to Week 5** — don't fight it this week.
+- **Sun (3 hr):** Read `netconfeval/common/model_configs.py` and the step scripts' grading logic. Document in `harness/grader_notes/netconfeval.md` what each step's pass/fail actually computes (exact-match? AST-equality? Kathará runtime check?). Identify what needs renormalizing to share metric definitions with Cornetto's grader in Week 3.
+
+**Deliverable:** NetConfEval steps 1–2 reproduce on your box; grader internals documented; step-3 (Kathará/Docker) scoped for Week 5.
 
 ### Week 3 (Jun 8 – Jun 14) — Reproduce Cornetto (or build equivalent)
 
@@ -91,18 +93,18 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 ### Week 4 (Jun 15 – Jun 21) — Harness skeleton: unified model API
 
 - **Mon/Wed/Fri (4.5 hr):** Build `harness/models/` with a single `Model` interface: `__call__(messages, tools=None) -> Response`. Implement adapters for OpenAI, Anthropic, Google, plus a `LocalVLLM` stub for Llama/Qwen. Implement a `MCPClientModel` adapter that wraps `junos-mcp-server`-style agents so they look like a model to the harness.
-- **Sat (3 hr):** Build `harness/runner.py` — given a `Task`, a `Model`, and an `Agent` (single-shot / ReAct / RAG), runs the loop, logs trace, returns `Run` object. Unit-test against one NetConfBench task.
+- **Sat (3 hr):** Build `harness/runner.py` — given a `Task`, a `Model`, and an `Agent` (single-shot / ReAct / RAG), runs the loop, logs trace, returns `Run` object. Unit-test against one NetConfEval step-1 task.
 - **Sun (3 hr):** Build `harness/storage.py` — write each run to `runs/{benchmark}/{model}/{task_id}.json`. Idempotent re-runs. Cache hits.
 
-**Deliverable:** `python -m nethelm.run --benchmark netconfbench --model gpt-4o --task t1` works and writes a result file.
+**Deliverable:** `python -m nethelm.run --benchmark netconfeval --model gpt-4o --task t1` works and writes a result file.
 
-### Week 5 (Jun 22 – Jun 28) — Harness: import NetConfBench fully
+### Week 5 (Jun 22 – Jun 28) — Harness: import NetConfEval fully (incl. step-3 low-level)
 
-- **Mon/Wed/Fri (4.5 hr):** Write `tasks/netconfbench/loader.py` — converts their task format into your normalized `Task` schema (`{id, category, prompt, oracle_inputs, grader_config}`). All 40 tasks loadable.
-- **Sat (3 hr):** Wire their grader into your `harness/graders/netconfbench.py` so `Run` → score. Re-run last week's GPT-4o run through your harness; numbers should match upstream within rounding.
-- **Sun (3 hr):** Write `tasks/netconfbench/README.md` documenting the import. This is paper §3.2 material — keep it polished.
+- **Mon/Wed/Fri (4.5 hr):** Write `tasks/netconfeval/loader.py` — converts each step's prompts + expected outputs into your normalized `Task` schema (`{id, category, prompt, oracle_inputs, grader_config}`). Cover all four policy types × all three step scripts loadable as distinct task families.
+- **Sat (3 hr):** Stand up Kathará + Docker on the MS-A2 box and run `step_3_low_level.py --mode rag` against GPT-4o on the four Kathará scenarios (OSPF single-area, OSPF multi-area, RIP, BGP peering). This is the slow one — start it in the morning. Wire its FRR-runtime grader into `harness/graders/netconfeval.py`.
+- **Sun (3 hr):** Re-run last week's GPT-4o results through your harness; numbers should match upstream within rounding. Write `tasks/netconfeval/README.md`. This is paper §3.2 material — keep it polished.
 
-**Deliverable:** NetConfBench runs end-to-end inside your harness, scores match upstream.
+**Deliverable:** All four NetConfEval experiment families run end-to-end inside your harness, scores match upstream.
 
 ### Week 6 (Jun 29 – Jul 5) — Harness: import Cornetto + NIKA
 
