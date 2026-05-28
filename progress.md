@@ -58,3 +58,39 @@ LLMs-for-Networking survey are the only real cuts.
 Blockers:
 - None hardware-side (MS-A2 + RunPod cover everything).
 - Pending: DNM legal ticket (own action item, will file today).
+
+## Day 8 — 2026-05-27 (Wed) — Mid-Week-1 reset
+
+Status update:
+- Mon May 25 done: containerlab 0.75.0 + Docker 29.5.2 + FRR-square iBGP
+  topology came up clean. Verification in
+  [harness/lab/frr_square/verify_2026-05-25.txt](harness/lab/frr_square/verify_2026-05-25.txt).
+  Four routers, twelve ESTABLISHED iBGP sessions, all four /32 loopbacks
+  in every RIB.
+- Tue May 26 (Batfish): **slipped** due to day-job load.
+- Wed–Fri reading slots also at risk.
+
+Recovery: compressed 3-day lab sprint Wed May 27 → Fri May 29 collapses
+the missed Tue Batfish slot + Sat cEOS slot + Sat cRPD/junos-mcp-server
+slot into the next three evenings (≈6 hr/day, dedicated MS-A2 host has
+no other load). Detail in
+[tasks/plan_2026-05-27_catchup.md](tasks/plan_2026-05-27_catchup.md).
+
+Net effect:
+- Phase 0 Week 1 lab deliverables (Batfish + cEOS + cRPD +
+  junos-mcp-server smoketest) all land by Fri May 29 EOD.
+- NetConfEval clone + venv jumps from Phase 1 Week 2 → Day 3 of this
+  sprint to de-risk the Week 2 reproduce-NetConfEval slot.
+- Sat May 30: revert to reading (NetPress+NIKA combined, HELM
+  methodology) per execution plan.
+- Sun May 31: `paper/outline_v0.md` + `paper/collab_targets.md` per
+  execution plan. Still on track to start Phase 1 Jun 1.
+
+Only real cut if the sprint slips: NetPress+NIKA reading moves to Sun
+AM and `outline_v0.md` shrinks to skeleton-only.
+
+Blockers:
+- Arista cEOS image requires registered arista.com account; cRPD
+  requires support.juniper.net account. Both being filed Wed evening so
+  Thu/Fri downloads are unblocked.
+- DNM legal ticket: re-ping scheduled in Day 2 of the sprint.
