@@ -1,0 +1,243 @@
+{
+  "name": "frrsq",
+  "type": "clab",
+  "clab": {
+    "config": {
+      "prefix": "clab",
+      "mgmt": {
+        "network": "clab",
+        "bridge": "br-267da45e84da",
+        "ipv4-subnet": "172.20.20.0/24",
+        "ipv4-gw": "172.20.20.1",
+        "ipv6-subnet": "3fff:172:20:20::/64",
+        "ipv6-gw": "3fff:172:20:20::1",
+        "external-access": true
+      }
+    }
+  },
+  "ssh-pub-keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB4ubTN2FtCCRoLlUgHBUWl+r7Iy04WJsSaU1nGMxsyG","ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOHeRnkPBQRp1da9vqEc3Zzxcy8xY3jfuJUB/VtId5/5","ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN8Q1xirKD9Z+b130Z1chDkRtuEbouubw/N6wSNoHoeW"],
+  "nodes": {
+    "r1": {
+      "index": "0",
+      "shortname": "r1",
+      "longname": "clab-frrsq-r1",
+      "fqdn": "r1.frrsq.io",
+      "group": "",
+      "labdir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r1",
+      "kind": "linux",
+      "image": "quay.io/frrouting/frr:10.6.1",
+      "mgmt-net": "",
+      "mgmt-intf": "",
+      "mgmt-ipv4-address": "172.20.20.2",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::2",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-267da45e84da",
+        "clab-node-group": "",
+        "clab-node-kind": "linux",
+        "clab-node-lab-dir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r1",
+        "clab-node-longname": "clab-frrsq-r1",
+        "clab-node-name": "r1",
+        "clab-node-type": "",
+        "clab-owner": "harshitsingh",
+        "clab-topo-file": "/home/harshitsingh/projects/NetHelm/harness/lab/frr_square.clab.yml",
+        "containerlab": "frrsq"
+      },
+      "port-bindings": [
+      ]
+    },
+    "r2": {
+      "index": "1",
+      "shortname": "r2",
+      "longname": "clab-frrsq-r2",
+      "fqdn": "r2.frrsq.io",
+      "group": "",
+      "labdir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r2",
+      "kind": "linux",
+      "image": "quay.io/frrouting/frr:10.6.1",
+      "mgmt-net": "",
+      "mgmt-intf": "",
+      "mgmt-ipv4-address": "172.20.20.5",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::5",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-267da45e84da",
+        "clab-node-group": "",
+        "clab-node-kind": "linux",
+        "clab-node-lab-dir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r2",
+        "clab-node-longname": "clab-frrsq-r2",
+        "clab-node-name": "r2",
+        "clab-node-type": "",
+        "clab-owner": "harshitsingh",
+        "clab-topo-file": "/home/harshitsingh/projects/NetHelm/harness/lab/frr_square.clab.yml",
+        "containerlab": "frrsq"
+      },
+      "port-bindings": [
+      ]
+    },
+    "r3": {
+      "index": "2",
+      "shortname": "r3",
+      "longname": "clab-frrsq-r3",
+      "fqdn": "r3.frrsq.io",
+      "group": "",
+      "labdir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r3",
+      "kind": "linux",
+      "image": "quay.io/frrouting/frr:10.6.1",
+      "mgmt-net": "",
+      "mgmt-intf": "",
+      "mgmt-ipv4-address": "172.20.20.4",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::4",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-267da45e84da",
+        "clab-node-group": "",
+        "clab-node-kind": "linux",
+        "clab-node-lab-dir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r3",
+        "clab-node-longname": "clab-frrsq-r3",
+        "clab-node-name": "r3",
+        "clab-node-type": "",
+        "clab-owner": "harshitsingh",
+        "clab-topo-file": "/home/harshitsingh/projects/NetHelm/harness/lab/frr_square.clab.yml",
+        "containerlab": "frrsq"
+      },
+      "port-bindings": [
+      ]
+    },
+    "r4": {
+      "index": "3",
+      "shortname": "r4",
+      "longname": "clab-frrsq-r4",
+      "fqdn": "r4.frrsq.io",
+      "group": "",
+      "labdir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r4",
+      "kind": "linux",
+      "image": "quay.io/frrouting/frr:10.6.1",
+      "mgmt-net": "",
+      "mgmt-intf": "",
+      "mgmt-ipv4-address": "172.20.20.3",
+      "mgmt-ipv4-prefix-length": 24,
+      "mgmt-ipv6-address": "3fff:172:20:20::3",
+      "mgmt-ipv6-prefix-length": 64,
+      "mac-address": "",
+      "labels": {
+        "clab-mgmt-net-bridge": "br-267da45e84da",
+        "clab-node-group": "",
+        "clab-node-kind": "linux",
+        "clab-node-lab-dir": "/home/harshitsingh/projects/NetHelm/harness/lab/clab-frrsq/r4",
+        "clab-node-longname": "clab-frrsq-r4",
+        "clab-node-name": "r4",
+        "clab-node-type": "",
+        "clab-owner": "harshitsingh",
+        "clab-topo-file": "/home/harshitsingh/projects/NetHelm/harness/lab/frr_square.clab.yml",
+        "containerlab": "frrsq"
+      },
+      "port-bindings": [
+      ]
+    }
+  },
+  "links": [
+    {
+      "endpoints": {
+        "a": {
+          "node": "r1",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:56:ba:e2",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r2",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:7d:17:13",
+          "peer": "a"
+        }
+      }
+    },
+    {
+      "endpoints": {
+        "a": {
+          "node": "r1",
+          "interface": "eth2",
+          "mac": "aa:c1:ab:ba:fd:ea",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r3",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:4b:5d:7d",
+          "peer": "a"
+        }
+      }
+    },
+    {
+      "endpoints": {
+        "a": {
+          "node": "r1",
+          "interface": "eth3",
+          "mac": "aa:c1:ab:8d:ad:1f",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r4",
+          "interface": "eth1",
+          "mac": "aa:c1:ab:60:01:52",
+          "peer": "a"
+        }
+      }
+    },
+    {
+      "endpoints": {
+        "a": {
+          "node": "r2",
+          "interface": "eth2",
+          "mac": "aa:c1:ab:8c:4b:ea",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r3",
+          "interface": "eth2",
+          "mac": "aa:c1:ab:da:b5:4b",
+          "peer": "a"
+        }
+      }
+    },
+    {
+      "endpoints": {
+        "a": {
+          "node": "r2",
+          "interface": "eth3",
+          "mac": "aa:c1:ab:9c:56:bc",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r4",
+          "interface": "eth2",
+          "mac": "aa:c1:ab:97:5d:52",
+          "peer": "a"
+        }
+      }
+    },
+    {
+      "endpoints": {
+        "a": {
+          "node": "r3",
+          "interface": "eth3",
+          "mac": "aa:c1:ab:5e:c3:13",
+          "peer": "z"
+        },
+        "z": {
+          "node": "r4",
+          "interface": "eth3",
+          "mac": "aa:c1:ab:6c:6d:cb",
+          "peer": "a"
+        }
+      }
+    }
+  ]
+}
