@@ -1,0 +1,600 @@
+FRR square iBGP verification
+Timestamp: 2026-05-28T02:52:15+00:00
+
+## Versions
+
+ ⣴⡾⠛⠛⠖ ⢠⣶⠟⠛⢷⣦ ⢸⣿⣧  ⣿ ⠘⠛⢻⡟⠛⠛  ⣾⣿⡀  ⣿⡇ ⣿⣿⡄ ⢸⡇ ⣿⡟⠛⠛⠃⢸⣿⠛⠛⣷⡄ [38;2;0;201;255m⣿⡇[0m      [38;2;0;201;255m⣿⡇[0m    
+⢸⣿     ⣿⡇   ⣿⡇⢸⣿⠹⣧⡀⣿   ⢸⡇   ⣸⡏⢹⣧  ⣿⡇ ⣿⡏⢿⣄⢸⡇ ⣿⣧⣤⣤ ⢸⣿⣀⣀⣾⠇ [38;2;0;201;255m⣿⡇⠐⠟⠛⢿⡆[0m [38;2;0;201;255m⣿⡷⠛⢿⣆[0m 
+⠘⣿⣄  ⡀ ⢻⣧⡀ ⣠⣿⠃⢸⣿ ⠘⣷⣿   ⢸⡇  ⢠⣿⠷⠶⢿⡆ ⣿⡇ ⣿⡇ ⢻⣾⡇ ⣿⡇   ⢸⣿⠉⢻⣧⡀ [38;2;0;201;255m⣿⡇⢰⡟⠛⣻⡇[0m [38;2;0;201;255m⣿⡇[0m [38;2;0;201;255m⣸⡿[0m 
+ ⠈⠙⠛⠛⠉  ⠉⠛⠛⠋⠁ ⠘⠛  ⠈⠛   ⠘⠃  ⠚⠃  ⠘⠛ ⠛⠃ ⠛⠃  ⠙⠃ ⠛⠛⠛⠛⠃⠘⠛  ⠙⠓ [38;2;0;201;255m⠛⠃⠈⠛⠛⠙⠃[0m [38;2;0;201;255m⠛⠛⠛⠛⠁[0m 
+
+    version: 0.75.0
+     commit: 6a686b7d7
+       date: 2026-04-27T09:35:56Z
+     source: https://github.com/srl-labs/containerlab
+ rel. notes: https://containerlab.dev/rn/0.75/
+Client: Docker Engine - Community
+ Version:           29.5.2
+ API version:       1.54
+ Go version:        go1.26.3
+ Git commit:        79eb04c
+ Built:             Wed May 20 14:38:06 2026
+ OS/Arch:           linux/amd64
+ Context:           default
+
+Server: Docker Engine - Community
+ Engine:
+  Version:          29.5.2
+  API version:      1.54 (minimum version 1.40)
+  Go version:       go1.26.3
+  Git commit:       568f755
+  Built:            Wed May 20 14:38:06 2026
+  OS/Arch:          linux/amd64
+  Experimental:     false
+ containerd:
+  Version:          v2.2.4
+  GitCommit:        193637f7ee8ae5f5aa5248f49e7baa3e6164966e
+ runc:
+  Version:          1.3.5
+  GitCommit:        v1.3.5-0-g488fc13e
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+FRR image: [quay.io/frrouting/frr:10.6.1] sha256:813497af103e972600f6161012b3bf2a2a1c5ea10d09cd1eacd74f1dc510a57b
+
+## Containerlab inspect
+[1m╭[0m[1m───────────────[0m[1m┬[0m[1m──────────────────────────────[0m[1m┬[0m[1m─────────[0m[1m┬[0m[1m───────────────────[0m[1m╮[0m
+[1m│[0m[1m      Name     [0m[1m│[0m[1m          Kind/Image          [0m[1m│[0m[1m  State  [0m[1m│[0m[1m   IPv4/6 Address  [0m[1m│[0m
+[1m├[0m[1m───────────────[0m[1m┼[0m[1m──────────────────────────────[0m[1m┼[0m[1m─────────[0m[1m┼[0m[1m───────────────────[0m[1m┤[0m
+│ clab-frrsq-r1 │ linux                        │ running │ 172.20.20.2       │
+│               │ quay.io/frrouting/frr:10.6.1 │         │ 3fff:172:20:20::2 │
+├───────────────┼──────────────────────────────┼─────────┼───────────────────┤
+│ clab-frrsq-r2 │ linux                        │ running │ 172.20.20.5       │
+│               │ quay.io/frrouting/frr:10.6.1 │         │ 3fff:172:20:20::5 │
+├───────────────┼──────────────────────────────┼─────────┼───────────────────┤
+│ clab-frrsq-r3 │ linux                        │ running │ 172.20.20.4       │
+│               │ quay.io/frrouting/frr:10.6.1 │         │ 3fff:172:20:20::4 │
+├───────────────┼──────────────────────────────┼─────────┼───────────────────┤
+│ clab-frrsq-r4 │ linux                        │ running │ 172.20.20.3       │
+│               │ quay.io/frrouting/frr:10.6.1 │         │ 3fff:172:20:20::3 │
+╰───────────────┴──────────────────────────────┴─────────┴───────────────────╯
+
+==============================
+Router: r1
+==============================
+
+### ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.1/32 brd 10.0.0.1 scope global lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+2: eth0@if27: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether 36:ac:04:3a:27:fa brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.20.20.2/24 brd 172.20.20.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 3fff:172:20:20::2/64 scope global nodad 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::34ac:4ff:fe3a:27fa/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+32: eth1@if31: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:56:ba:e2 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    altname clab-o-045ec1bad251fbd0
+    inet 192.0.2.1/30 brd 192.0.2.3 scope global eth1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe56:bae2/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+33: eth3@if34: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:8d:ad:1f brd ff:ff:ff:ff:ff:ff link-netnsid 3
+    altname clab-o-a5e7bd674c3b8074
+    inet 192.0.2.9/30 brd 192.0.2.11 scope global eth3
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe8d:ad1f/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+35: eth2@if36: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:ba:fd:ea brd ff:ff:ff:ff:ff:ff link-netnsid 2
+    altname clab-o-f4a4216ff399fb64
+    inet 192.0.2.5/30 brd 192.0.2.7 scope global eth2
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:feba:fdea/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+
+### ip route
+default via 172.20.20.1 dev eth0 
+10.0.0.2 nhid 16 via 192.0.2.2 dev eth1 proto 196 metric 20 
+10.0.0.3 nhid 24 via 192.0.2.6 dev eth2 proto 196 metric 20 
+10.0.0.4 nhid 31 via 192.0.2.10 dev eth3 proto 196 metric 20 
+172.20.20.0/24 dev eth0 proto kernel scope link src 172.20.20.2 
+192.0.2.0/30 dev eth1 proto kernel scope link src 192.0.2.1 
+192.0.2.4/30 dev eth2 proto kernel scope link src 192.0.2.5 
+192.0.2.8/30 dev eth3 proto kernel scope link src 192.0.2.9 
+
+### show ip bgp summary
+
+IPv4 Unicast Summary:
+BGP router identifier 10.0.0.1, local AS number 65000 VRF default vrf-id 0
+BGP table version 1
+RIB entries 7, using 1064 bytes of memory
+Peers 3, using 50 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.2        4      65000      2657      2658        1    0    0 1d20h13m            1        1 N/A
+10.0.0.3        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.4        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+
+Total number of neighbors 3
+
+### show ip bgp
+BGP table version is 1, local router ID is 10.0.0.1, vrf id 0
+Default local pref 100, local AS 65000
+Status codes:  s suppressed, d damped, h history, u unsorted, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+ *>  10.0.0.1/32      0.0.0.0                  0         32768 i
+   i 10.0.0.2/32      10.0.0.2                 0    100      0 i
+   i 10.0.0.3/32      10.0.0.3                 0    100      0 i
+   i 10.0.0.4/32      10.0.0.4                 0    100      0 i
+
+Displayed 4 routes and 4 total paths
+
+### show ip route bgp
+
+### show running-config
+Building configuration...
+
+Current configuration:
+!
+frr version 10.6.1_git
+frr defaults traditional
+hostname r1
+!
+ip route 10.0.0.2/32 192.0.2.2
+ip route 10.0.0.3/32 192.0.2.6
+ip route 10.0.0.4/32 192.0.2.10
+!
+interface eth1
+ ip address 192.0.2.1/30
+exit
+!
+interface eth2
+ ip address 192.0.2.5/30
+exit
+!
+interface eth3
+ ip address 192.0.2.9/30
+exit
+!
+interface lo
+ ip address 10.0.0.1/32
+exit
+!
+router bgp 65000
+ bgp router-id 10.0.0.1
+ neighbor 10.0.0.2 remote-as 65000
+ neighbor 10.0.0.2 update-source lo
+ neighbor 10.0.0.3 remote-as 65000
+ neighbor 10.0.0.3 update-source lo
+ neighbor 10.0.0.4 remote-as 65000
+ neighbor 10.0.0.4 update-source lo
+ !
+ address-family ipv4 unicast
+  network 10.0.0.1/32
+  neighbor 10.0.0.2 next-hop-self
+  neighbor 10.0.0.3 next-hop-self
+  neighbor 10.0.0.4 next-hop-self
+ exit-address-family
+exit
+!
+end
+
+==============================
+Router: r2
+==============================
+
+### ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.2/32 brd 10.0.0.2 scope global lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+2: eth0@if30: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether c2:fc:12:3b:79:ab brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.20.20.5/24 brd 172.20.20.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 3fff:172:20:20::5/64 scope global nodad 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::c0fc:12ff:fe3b:79ab/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+31: eth1@if32: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:7d:17:13 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    altname clab-o-c562dad456c4f054
+    inet 192.0.2.2/30 brd 192.0.2.3 scope global eth1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe7d:1713/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+37: eth2@if38: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:8c:4b:ea brd ff:ff:ff:ff:ff:ff link-netnsid 2
+    altname clab-o-ebed7f62cb896411
+    inet 192.0.2.13/30 brd 192.0.2.15 scope global eth2
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe8c:4bea/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+39: eth3@if40: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:9c:56:bc brd ff:ff:ff:ff:ff:ff link-netnsid 3
+    altname clab-o-4301aba7f8b31116
+    inet 192.0.2.17/30 brd 192.0.2.19 scope global eth3
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe9c:56bc/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+
+### ip route
+default via 172.20.20.1 dev eth0 
+10.0.0.1 nhid 16 via 192.0.2.1 dev eth1 proto 196 metric 20 
+10.0.0.3 nhid 29 via 192.0.2.14 dev eth2 proto 196 metric 20 
+10.0.0.4 nhid 28 via 192.0.2.18 dev eth3 proto 196 metric 20 
+172.20.20.0/24 dev eth0 proto kernel scope link src 172.20.20.5 
+192.0.2.0/30 dev eth1 proto kernel scope link src 192.0.2.2 
+192.0.2.12/30 dev eth2 proto kernel scope link src 192.0.2.13 
+192.0.2.16/30 dev eth3 proto kernel scope link src 192.0.2.17 
+
+### show ip bgp summary
+
+IPv4 Unicast Summary:
+BGP router identifier 10.0.0.2, local AS number 65000 VRF default vrf-id 0
+BGP table version 1
+RIB entries 7, using 1064 bytes of memory
+Peers 3, using 50 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.3        4      65000      2657      2658        1    0    0 1d20h13m            1        1 N/A
+10.0.0.4        4      65000      2657      2658        1    0    0 1d20h13m            1        1 N/A
+
+Total number of neighbors 3
+
+### show ip bgp
+BGP table version is 1, local router ID is 10.0.0.2, vrf id 0
+Default local pref 100, local AS 65000
+Status codes:  s suppressed, d damped, h history, u unsorted, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+   i 10.0.0.1/32      10.0.0.1                 0    100      0 i
+ *>  10.0.0.2/32      0.0.0.0                  0         32768 i
+   i 10.0.0.3/32      10.0.0.3                 0    100      0 i
+   i 10.0.0.4/32      10.0.0.4                 0    100      0 i
+
+Displayed 4 routes and 4 total paths
+
+### show ip route bgp
+
+### show running-config
+Building configuration...
+
+Current configuration:
+!
+frr version 10.6.1_git
+frr defaults traditional
+hostname r2
+!
+ip route 10.0.0.1/32 192.0.2.1
+ip route 10.0.0.3/32 192.0.2.14
+ip route 10.0.0.4/32 192.0.2.18
+!
+interface eth1
+ ip address 192.0.2.2/30
+exit
+!
+interface eth2
+ ip address 192.0.2.13/30
+exit
+!
+interface eth3
+ ip address 192.0.2.17/30
+exit
+!
+interface lo
+ ip address 10.0.0.2/32
+exit
+!
+router bgp 65000
+ bgp router-id 10.0.0.2
+ neighbor 10.0.0.1 remote-as 65000
+ neighbor 10.0.0.1 update-source lo
+ neighbor 10.0.0.3 remote-as 65000
+ neighbor 10.0.0.3 update-source lo
+ neighbor 10.0.0.4 remote-as 65000
+ neighbor 10.0.0.4 update-source lo
+ !
+ address-family ipv4 unicast
+  network 10.0.0.2/32
+  neighbor 10.0.0.1 next-hop-self
+  neighbor 10.0.0.3 next-hop-self
+  neighbor 10.0.0.4 next-hop-self
+ exit-address-family
+exit
+!
+end
+
+==============================
+Router: r3
+==============================
+
+### ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.3/32 brd 10.0.0.3 scope global lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+2: eth0@if29: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether fa:ca:8d:17:f1:68 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.20.20.4/24 brd 172.20.20.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 3fff:172:20:20::4/64 scope global nodad 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::f8ca:8dff:fe17:f168/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+36: eth1@if35: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:4b:5d:7d brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    altname clab-o-7002528c3599de04
+    inet 192.0.2.6/30 brd 192.0.2.7 scope global eth1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe4b:5d7d/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+38: eth2@if37: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:da:b5:4b brd ff:ff:ff:ff:ff:ff link-netnsid 2
+    altname clab-o-38fe2e92b06c8343
+    inet 192.0.2.14/30 brd 192.0.2.15 scope global eth2
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:feda:b54b/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+42: eth3@if41: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:5e:c3:13 brd ff:ff:ff:ff:ff:ff link-netnsid 3
+    altname clab-o-e995a9b722ac0d12
+    inet 192.0.2.21/30 brd 192.0.2.23 scope global eth3
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe5e:c313/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+
+### ip route
+default via 172.20.20.1 dev eth0 
+10.0.0.1 nhid 16 via 192.0.2.5 dev eth1 proto 196 metric 20 
+10.0.0.2 nhid 26 via 192.0.2.13 dev eth2 proto 196 metric 20 
+10.0.0.4 nhid 32 via 192.0.2.22 dev eth3 proto 196 metric 20 
+172.20.20.0/24 dev eth0 proto kernel scope link src 172.20.20.4 
+192.0.2.4/30 dev eth1 proto kernel scope link src 192.0.2.6 
+192.0.2.12/30 dev eth2 proto kernel scope link src 192.0.2.14 
+192.0.2.20/30 dev eth3 proto kernel scope link src 192.0.2.21 
+
+### show ip bgp summary
+
+IPv4 Unicast Summary:
+BGP router identifier 10.0.0.3, local AS number 65000 VRF default vrf-id 0
+BGP table version 1
+RIB entries 7, using 1064 bytes of memory
+Peers 3, using 50 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.2        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.4        4      65000      2659      2659        1    0    0 1d20h13m            1        1 N/A
+
+Total number of neighbors 3
+
+### show ip bgp
+BGP table version is 1, local router ID is 10.0.0.3, vrf id 0
+Default local pref 100, local AS 65000
+Status codes:  s suppressed, d damped, h history, u unsorted, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+   i 10.0.0.1/32      10.0.0.1                 0    100      0 i
+   i 10.0.0.2/32      10.0.0.2                 0    100      0 i
+ *>  10.0.0.3/32      0.0.0.0                  0         32768 i
+   i 10.0.0.4/32      10.0.0.4                 0    100      0 i
+
+Displayed 4 routes and 4 total paths
+
+### show ip route bgp
+
+### show running-config
+Building configuration...
+
+Current configuration:
+!
+frr version 10.6.1_git
+frr defaults traditional
+hostname r3
+!
+ip route 10.0.0.1/32 192.0.2.5
+ip route 10.0.0.2/32 192.0.2.13
+ip route 10.0.0.4/32 192.0.2.22
+!
+interface eth1
+ ip address 192.0.2.6/30
+exit
+!
+interface eth2
+ ip address 192.0.2.14/30
+exit
+!
+interface eth3
+ ip address 192.0.2.21/30
+exit
+!
+interface lo
+ ip address 10.0.0.3/32
+exit
+!
+router bgp 65000
+ bgp router-id 10.0.0.3
+ neighbor 10.0.0.1 remote-as 65000
+ neighbor 10.0.0.1 update-source lo
+ neighbor 10.0.0.2 remote-as 65000
+ neighbor 10.0.0.2 update-source lo
+ neighbor 10.0.0.4 remote-as 65000
+ neighbor 10.0.0.4 update-source lo
+ !
+ address-family ipv4 unicast
+  network 10.0.0.3/32
+  neighbor 10.0.0.1 next-hop-self
+  neighbor 10.0.0.2 next-hop-self
+  neighbor 10.0.0.4 next-hop-self
+ exit-address-family
+exit
+!
+end
+
+==============================
+Router: r4
+==============================
+
+### ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.4/32 brd 10.0.0.4 scope global lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+2: eth0@if28: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether ca:ab:e1:50:98:41 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.20.20.3/24 brd 172.20.20.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 3fff:172:20:20::3/64 scope global nodad 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::c8ab:e1ff:fe50:9841/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+34: eth1@if33: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:60:01:52 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    altname clab-o-93e9734b7b82cc4a
+    inet 192.0.2.10/30 brd 192.0.2.11 scope global eth1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe60:152/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+40: eth2@if39: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:97:5d:52 brd ff:ff:ff:ff:ff:ff link-netnsid 3
+    altname clab-o-16840a3d9f6b29fd
+    inet 192.0.2.18/30 brd 192.0.2.19 scope global eth2
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe97:5d52/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+41: eth3@if42: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9500 qdisc noqueue state UP group default 
+    link/ether aa:c1:ab:6c:6d:cb brd ff:ff:ff:ff:ff:ff link-netnsid 2
+    altname clab-o-e5dcd77f0d3c4715
+    inet 192.0.2.22/30 brd 192.0.2.23 scope global eth3
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a8c1:abff:fe6c:6dcb/64 scope link proto kernel_ll 
+       valid_lft forever preferred_lft forever
+
+### ip route
+default via 172.20.20.1 dev eth0 
+10.0.0.1 nhid 29 via 192.0.2.9 dev eth1 proto 196 metric 20 
+10.0.0.2 nhid 31 via 192.0.2.17 dev eth2 proto 196 metric 20 
+10.0.0.3 nhid 30 via 192.0.2.21 dev eth3 proto 196 metric 20 
+172.20.20.0/24 dev eth0 proto kernel scope link src 172.20.20.3 
+192.0.2.8/30 dev eth1 proto kernel scope link src 192.0.2.10 
+192.0.2.16/30 dev eth2 proto kernel scope link src 192.0.2.18 
+192.0.2.20/30 dev eth3 proto kernel scope link src 192.0.2.22 
+
+### show ip bgp summary
+
+IPv4 Unicast Summary:
+BGP router identifier 10.0.0.4, local AS number 65000 VRF default vrf-id 0
+BGP table version 1
+RIB entries 7, using 1064 bytes of memory
+Peers 3, using 50 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.2        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+10.0.0.3        4      65000      2657      2657        1    0    0 1d20h13m            1        1 N/A
+
+Total number of neighbors 3
+
+### show ip bgp
+BGP table version is 1, local router ID is 10.0.0.4, vrf id 0
+Default local pref 100, local AS 65000
+Status codes:  s suppressed, d damped, h history, u unsorted, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+   i 10.0.0.1/32      10.0.0.1                 0    100      0 i
+   i 10.0.0.2/32      10.0.0.2                 0    100      0 i
+   i 10.0.0.3/32      10.0.0.3                 0    100      0 i
+ *>  10.0.0.4/32      0.0.0.0                  0         32768 i
+
+Displayed 4 routes and 4 total paths
+
+### show ip route bgp
+
+### show running-config
+Building configuration...
+
+Current configuration:
+!
+frr version 10.6.1_git
+frr defaults traditional
+hostname r4
+!
+ip route 10.0.0.1/32 192.0.2.9
+ip route 10.0.0.2/32 192.0.2.17
+ip route 10.0.0.3/32 192.0.2.21
+!
+interface eth1
+ ip address 192.0.2.10/30
+exit
+!
+interface eth2
+ ip address 192.0.2.18/30
+exit
+!
+interface eth3
+ ip address 192.0.2.22/30
+exit
+!
+interface lo
+ ip address 10.0.0.4/32
+exit
+!
+router bgp 65000
+ bgp router-id 10.0.0.4
+ neighbor 10.0.0.1 remote-as 65000
+ neighbor 10.0.0.1 update-source lo
+ neighbor 10.0.0.2 remote-as 65000
+ neighbor 10.0.0.2 update-source lo
+ neighbor 10.0.0.3 remote-as 65000
+ neighbor 10.0.0.3 update-source lo
+ !
+ address-family ipv4 unicast
+  network 10.0.0.4/32
+  neighbor 10.0.0.1 next-hop-self
+  neighbor 10.0.0.2 next-hop-self
+  neighbor 10.0.0.3 next-hop-self
+ exit-address-family
+exit
+!
+end
