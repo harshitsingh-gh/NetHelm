@@ -132,3 +132,46 @@ providers via Inspect AI (`--model openai/gpt-4o` or
 Blockers:
 - None. Next: human-approved 1-task real-model smoke (Claude or GPT-4o),
   then add a second intent + a trap scenario.
+
+## Day 19 (cont.) — 2026-06-07 — multi-dimensional blast-radius axis
+
+Big step on the safety axis: moved it from "lost BGP sessions" to a real
+multi-dimensional blast radius, on a `brainstorming-session` branch
+(PR #1).
+
+- Wrote a 20-scenario catalog from the literature (NetConfEval, NIKA,
+  NetPress, Batfish docs, Forward Networks):
+  `paper/refs/blast_radius_scenario_catalog.md`. Two reframings baked in:
+  topologies vary and are parameterised (CLOS leaf-spine, ISP backbone,
+  MPLS L3VPN, multi-area OSPF, campus, anycast) — not the 4-router square;
+  and blast radius is 8-dimensional (D1-D8), with single-protocol session
+  loss as one special case.
+- Implemented the five new dimensions as typed elements + an extended
+  grader, purely additively — the frozen v0 core was never edited.
+  D4 waypoint, D5 redundancy/ECMP, D6 filter, D7 forwarding anomaly,
+  D8 scale.
+- Built **live Batfish oracles** for D4, D5, D7 on three new small
+  verified topologies (waypoint4, ecmp4, and a blackhole change on
+  square4). Then unified them: one oracle call computes every declared
+  dimension on a single pre/post snapshot pair. This exposed that the
+  blackhole "cleanup" is really a 4-D blast (2 session losses + prefix
+  loss + reachability loss + blackhole).
+- Wired the real-model path (8-D prompt contract + tolerant parser +
+  runner) and ran Claude Haiku 4.5 as a model-under-test, one call per
+  scenario:
+    * ecmp      -> exact pass (macro_f1 1.0)
+    * waypoint  -> partial 0.5 (caught the waypoint, hallucinated a
+                   redundancy loss)
+    * blackhole -> partial 0.5 (nailed the data-plane effects, missed the
+                   second-order control-plane session/prefix loss)
+  First concrete evidence for the thesis: a session-only grader scores the
+  blackhole a perfect pass and misses the real damage; the model handles
+  direct data-plane effects but misses second-order ones and sometimes
+  hallucinates an inapplicable dimension.
+- Tests grew 52 -> 91. Docs added: topology/scenario authoring guide,
+  the scenario catalog, and a full end-to-end guide
+  (`docs/multidimensional_blast_radius.md`).
+
+Next (see HANDOFF.md for detail): D6 + D8 oracles, a multi-sample /
+multi-model sweep (single calls are stochastic), grader-validity
+labelling for the new dims, and merging PR #1.
