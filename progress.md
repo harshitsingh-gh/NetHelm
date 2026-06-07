@@ -89,3 +89,46 @@ Blockers:
   requires support.juniper.net account. Both being filed Wed evening so
   Thu/Fri downloads are unblocked.
 - DNM legal ticket: re-ping scheduled in Day 2 of the sprint.
+
+## Day 19 — 2026-06-07 (Sun) — Task C done; first full E2E run
+
+Status update:
+- **Task C (Batfish oracle) — DONE.** This was the last open task in the
+  safety-axis MVP. Ran the full pipeline end-to-end against the live
+  Batfish + 4-node FRR lab.
+  - Verified pybatfish column names on a live snapshot against what
+    `oracle.py` expects — they match (`Node`, `Remote_IP`, `VRF`,
+    `Established_Status`; `Node`, `Network`, `VRF`). No oracle.py edit
+    needed.
+  - `netbrace safety generate --count 12 --out tasks/safety/v0`
+  - `netbrace safety oracle --suite tasks/safety/v0 --host 127.0.0.1`
+    → 12/12 `oracle.status=ready`, all `deterministic=True` (~45s).
+  - `netbrace safety validate --suite tasks/safety/v0 --require-oracle` → OK.
+  - Cross-checked one oracle output against live `vtysh show ip bgp
+    summary` on clab-frrsq-r1 (3 ESTABLISHED peers) — agrees.
+- **Oracle findings (sanity-correct):** shutting a neighbor drops the
+  iBGP session on BOTH endpoints (Batfish reports it bidirectionally);
+  `prefixes_lost` is empty because the watched loopbacks resolve via
+  static routes (admin-distance 1) which survive the BGP drop. This is
+  exactly the "is the model aware of the static backup?" subtlety the
+  safety axis is designed to test.
+- **Grader validated end-to-end, zero API spend** via FakeModel in three
+  modes: oracle → macro-F1 1.0; empty → F1 0.0 (recall floor); garbage →
+  F1 0.0 + invalid_rate 1.0 (parser correctly rejects). Artifacts in
+  `runs/flow_oracle|empty|garbage/`, figure in
+  `paper/figures/safety_f1_by_intent.pdf`.
+- Unit tests still green: **52 passed.**
+- **Docs:** added `docs/authoring_topologies_and_scenarios.md` — a
+  recipe-style guide (deterministic addressing scheme + Batfish/clab
+  verification GATEs) so a smaller model can add new topologies and
+  scenarios reliably. Architecture overview remains
+  `docs/project_guide.md`.
+
+Not run (deliberate): real-model `eval run` (GPT-4o / Claude) — needs
+human approval for paid API spend. Confirmed the path works for both
+providers via Inspect AI (`--model openai/gpt-4o` or
+`anthropic/claude-sonnet-4-6`).
+
+Blockers:
+- None. Next: human-approved 1-task real-model smoke (Claude or GPT-4o),
+  then add a second intent + a trap scenario.

@@ -1,0 +1,116 @@
+{
+  "baseline": {
+    "config_format": "frr",
+    "configs": {
+      "r1": "r1\n\n# This file describes the network interfaces\nauto lo\niface lo inet loopback\n    address 10.0.0.1/32\n\nauto eth1\niface eth1 inet static\n    address 192.0.2.1/30\n\nauto eth2\niface eth2 inet static\n    address 192.0.2.5/30\n\nauto eth3\niface eth3 inet static\n    address 192.0.2.9/30\n\n# ports.conf --\n\nfrr version 10.6.1\nfrr defaults traditional\nhostname r1\nservice integrated-vtysh-config\n!\nip forwarding\n!\ninterface lo\n ip address 10.0.0.1/32\n!\ninterface eth1\n ip address 192.0.2.1/30\n!\ninterface eth2\n ip address 192.0.2.5/30\n!\ninterface eth3\n ip address 192.0.2.9/30\n!\nip route 10.0.0.2/32 192.0.2.2\nip route 10.0.0.3/32 192.0.2.6\nip route 10.0.0.4/32 192.0.2.10\n!\nrouter bgp 65000\n bgp router-id 10.0.0.1\n neighbor 10.0.0.2 remote-as 65000\n neighbor 10.0.0.2 update-source lo\n neighbor 10.0.0.2 next-hop-self\n neighbor 10.0.0.3 remote-as 65000\n neighbor 10.0.0.3 update-source lo\n neighbor 10.0.0.3 next-hop-self\n neighbor 10.0.0.4 remote-as 65000\n neighbor 10.0.0.4 update-source lo\n neighbor 10.0.0.4 next-hop-self\n !\n address-family ipv4 unicast\n  network 10.0.0.1/32\n exit-address-family\n!\nline vty\n!\n",
+      "r2": "r2\n\n# This file describes the network interfaces\nauto lo\niface lo inet loopback\n    address 10.0.0.2/32\n\nauto eth1\niface eth1 inet static\n    address 192.0.2.2/30\n\nauto eth2\niface eth2 inet static\n    address 192.0.2.13/30\n\nauto eth3\niface eth3 inet static\n    address 192.0.2.17/30\n\n# ports.conf --\n\nfrr version 10.6.1\nfrr defaults traditional\nhostname r2\nservice integrated-vtysh-config\n!\nip forwarding\n!\ninterface lo\n ip address 10.0.0.2/32\n!\ninterface eth1\n ip address 192.0.2.2/30\n!\ninterface eth2\n ip address 192.0.2.13/30\n!\ninterface eth3\n ip address 192.0.2.17/30\n!\nip route 10.0.0.1/32 192.0.2.1\nip route 10.0.0.3/32 192.0.2.14\nip route 10.0.0.4/32 192.0.2.18\n!\nrouter bgp 65000\n bgp router-id 10.0.0.2\n neighbor 10.0.0.1 remote-as 65000\n neighbor 10.0.0.1 update-source lo\n neighbor 10.0.0.1 next-hop-self\n neighbor 10.0.0.3 remote-as 65000\n neighbor 10.0.0.3 update-source lo\n neighbor 10.0.0.3 next-hop-self\n neighbor 10.0.0.4 remote-as 65000\n neighbor 10.0.0.4 update-source lo\n neighbor 10.0.0.4 next-hop-self\n !\n address-family ipv4 unicast\n  network 10.0.0.2/32\n exit-address-family\n!\nline vty\n!\n",
+      "r3": "r3\n\n# This file describes the network interfaces\nauto lo\niface lo inet loopback\n    address 10.0.0.3/32\n\nauto eth1\niface eth1 inet static\n    address 192.0.2.6/30\n\nauto eth2\niface eth2 inet static\n    address 192.0.2.14/30\n\nauto eth3\niface eth3 inet static\n    address 192.0.2.21/30\n\n# ports.conf --\n\nfrr version 10.6.1\nfrr defaults traditional\nhostname r3\nservice integrated-vtysh-config\n!\nip forwarding\n!\ninterface lo\n ip address 10.0.0.3/32\n!\ninterface eth1\n ip address 192.0.2.6/30\n!\ninterface eth2\n ip address 192.0.2.14/30\n!\ninterface eth3\n ip address 192.0.2.21/30\n!\nip route 10.0.0.1/32 192.0.2.5\nip route 10.0.0.2/32 192.0.2.13\nip route 10.0.0.4/32 192.0.2.22\n!\nrouter bgp 65000\n bgp router-id 10.0.0.3\n neighbor 10.0.0.1 remote-as 65000\n neighbor 10.0.0.1 update-source lo\n neighbor 10.0.0.1 next-hop-self\n neighbor 10.0.0.2 remote-as 65000\n neighbor 10.0.0.2 update-source lo\n neighbor 10.0.0.2 next-hop-self\n neighbor 10.0.0.4 remote-as 65000\n neighbor 10.0.0.4 update-source lo\n neighbor 10.0.0.4 next-hop-self\n !\n address-family ipv4 unicast\n  network 10.0.0.3/32\n exit-address-family\n!\nline vty\n!\n",
+      "r4": "r4\n\n# This file describes the network interfaces\nauto lo\niface lo inet loopback\n    address 10.0.0.4/32\n\nauto eth1\niface eth1 inet static\n    address 192.0.2.10/30\n\nauto eth2\niface eth2 inet static\n    address 192.0.2.18/30\n\nauto eth3\niface eth3 inet static\n    address 192.0.2.22/30\n\n# ports.conf --\n\nfrr version 10.6.1\nfrr defaults traditional\nhostname r4\nservice integrated-vtysh-config\n!\nip forwarding\n!\ninterface lo\n ip address 10.0.0.4/32\n!\ninterface eth1\n ip address 192.0.2.10/30\n!\ninterface eth2\n ip address 192.0.2.18/30\n!\ninterface eth3\n ip address 192.0.2.22/30\n!\nip route 10.0.0.1/32 192.0.2.9\nip route 10.0.0.2/32 192.0.2.17\nip route 10.0.0.3/32 192.0.2.21\n!\nrouter bgp 65000\n bgp router-id 10.0.0.4\n neighbor 10.0.0.1 remote-as 65000\n neighbor 10.0.0.1 update-source lo\n neighbor 10.0.0.1 next-hop-self\n neighbor 10.0.0.2 remote-as 65000\n neighbor 10.0.0.2 update-source lo\n neighbor 10.0.0.2 next-hop-self\n neighbor 10.0.0.3 remote-as 65000\n neighbor 10.0.0.3 update-source lo\n neighbor 10.0.0.3 next-hop-self\n !\n address-family ipv4 unicast\n  network 10.0.0.4/32\n exit-address-family\n!\nline vty\n!\n"
+    }
+  },
+  "change": {
+    "change_id": "change.r2.shut_10_0_0_4",
+    "description": "On r2, remove the BGP neighbor 10.0.0.4 (peer r4) to take the session down.",
+    "format": "unified_diff",
+    "patch": "--- r2.conf\n+++ r2.conf\n@@ -50,9 +50,6 @@\n  neighbor 10.0.0.3 remote-as 65000\n  neighbor 10.0.0.3 update-source lo\n  neighbor 10.0.0.3 next-hop-self\n- neighbor 10.0.0.4 remote-as 65000\n- neighbor 10.0.0.4 update-source lo\n- neighbor 10.0.0.4 next-hop-self\n  !\n  address-family ipv4 unicast\n   network 10.0.0.2/32\n",
+    "target_nodes": [
+      "r2"
+    ]
+  },
+  "difficulty": "easy",
+  "family": "bgp",
+  "intent": "shut_neighbor",
+  "meta": {
+    "hand_validated": false,
+    "is_trap": false,
+    "notes": "",
+    "source": "generated"
+  },
+  "oracle": {
+    "blast_radius": {
+      "prefixes_lost": [],
+      "reachability_lost": [],
+      "sessions_lost": [
+        {
+          "node": "r2",
+          "peer_ip": "10.0.0.4",
+          "vrf": "default"
+        },
+        {
+          "node": "r4",
+          "peer_ip": "10.0.0.2",
+          "vrf": "default"
+        }
+      ]
+    },
+    "computed_at": "2026-06-07T21:18:20.814889+00:00",
+    "deterministic": true,
+    "engine": "batfish",
+    "engine_version": null,
+    "error": null,
+    "status": "ready"
+  },
+  "presentation": {
+    "operator_question": "Which BGP sessions and prefixes will be lost after this proposed change?",
+    "prompt_template_id": "safety_direct_v0"
+  },
+  "schema_version": "nethelm.task.v0",
+  "seed": 6,
+  "task_id": "safety.bgp.shut_neighbor.square4.0006",
+  "topology": {
+    "links": [
+      {
+        "a_intf": "eth1",
+        "a_node": "r1",
+        "b_intf": "eth1",
+        "b_node": "r2"
+      },
+      {
+        "a_intf": "eth2",
+        "a_node": "r1",
+        "b_intf": "eth1",
+        "b_node": "r3"
+      },
+      {
+        "a_intf": "eth3",
+        "a_node": "r1",
+        "b_intf": "eth1",
+        "b_node": "r4"
+      },
+      {
+        "a_intf": "eth2",
+        "a_node": "r2",
+        "b_intf": "eth2",
+        "b_node": "r3"
+      },
+      {
+        "a_intf": "eth3",
+        "a_node": "r2",
+        "b_intf": "eth2",
+        "b_node": "r4"
+      },
+      {
+        "a_intf": "eth3",
+        "a_node": "r3",
+        "b_intf": "eth3",
+        "b_node": "r4"
+      }
+    ],
+    "name": "square4",
+    "nodes": [
+      "r1",
+      "r2",
+      "r3",
+      "r4"
+    ],
+    "routing_protocols": [
+      "bgp"
+    ]
+  },
+  "watched_prefixes": [
+    "10.0.0.1/32",
+    "10.0.0.2/32",
+    "10.0.0.3/32",
+    "10.0.0.4/32"
+  ]
+}
