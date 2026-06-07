@@ -28,6 +28,7 @@ from netbrace.core.dimensions import ExtendedBlastRadius
 from netbrace.evals.extended_parser import parse_extended_prediction
 from netbrace.graders.extended import grade_extended
 from netbrace.models.fake_extended import ExtendedFakeModel
+from netbrace.tasks.safety import baseline_ecmp4 as ec
 from netbrace.tasks.safety import baseline_waypoint4 as wp
 from netbrace.tasks.safety import scenario_blackhole as bh
 from netbrace.topology.patches import apply_unified_diff
@@ -60,8 +61,19 @@ def _oracle_truth(scenario: str, host: str) -> tuple[ExtendedBlastRadius, dict]:
             "patch": bh.change_patch(), "watched": bh.WATCHED_PREFIXES,
             "intents": "All loopbacks must remain reachable from every node.",
         }
+    elif scenario == "ecmp":
+        pre = ec.baseline_configs()
+        post = dict(pre)
+        post[ec.CHANGE_TARGET] = apply_unified_diff(post[ec.CHANGE_TARGET], ec.change_patch())
+        truth = oracle.compute_redundancy(pre, post, ec.REDUNDANCY_TARGETS)
+        ctx = {
+            "name": "ecmp4", "nodes": ec.NODES, "configs": pre,
+            "description": "Remove one of src's two equal-cost static routes to 10.0.0.4/32.",
+            "patch": ec.change_patch(), "watched": ec.WATCHED_PREFIXES,
+            "intents": "src->10.0.0.4/32 must keep 2 equal-cost paths for resilience.",
+        }
     else:
-        raise SystemExit(f"unknown scenario {scenario!r} (use waypoint|blackhole)")
+        raise SystemExit(f"unknown scenario {scenario!r} (use waypoint|blackhole|ecmp)")
     return truth, ctx
 
 
@@ -97,7 +109,7 @@ def _call_anthropic(model_id: str, prompt: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scenario", required=True, choices=["waypoint", "blackhole"])
+    ap.add_argument("--scenario", required=True, choices=["waypoint", "blackhole", "ecmp"])
     ap.add_argument("--model", default="fake",
                     help="'fake' (zero API) or 'anthropic/<id>' / 'openai/<id>' (PAID)")
     ap.add_argument("--mode", default="oracle", choices=["oracle", "empty", "garbage"],
