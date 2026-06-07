@@ -16,9 +16,8 @@ from pathlib import Path
 
 def safety_task(suite_dir: str | Path, limit: int | None = None):
     """Build and return an Inspect AI Task for the safety-axis benchmark."""
-    from inspect_ai import Task, task
+    from inspect_ai import Task
     from inspect_ai.dataset import Sample
-    from inspect_ai.scorer import mean, stderr
     from inspect_ai.solver import generate, system_message
 
     from netbrace.core.jsonio import to_json

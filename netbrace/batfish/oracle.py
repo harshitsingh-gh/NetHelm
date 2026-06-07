@@ -5,7 +5,7 @@
       column names and FRR modeling behavior MUST be verified on the lab host
       before trusting the output. See plan.md §14 open questions Q2/Q3/Q4.
       The first task for whoever runs this on the lab: run
-      `nethelm safety oracle ... --debug` on ONE shut_neighbor task and confirm
+      `netbrace safety oracle ... --debug` on ONE shut_neighbor task and confirm
       the reported sessions_lost matches `show ip bgp summary` reality.
 
 Design (plan.md §5): we compute the baseline state (S0) and post-change state
@@ -13,7 +13,7 @@ Design (plan.md §5): we compute the baseline state (S0) and post-change state
 than using Batfish differential mode — the result is identical but the mechanism
 is unambiguous and easy to debug. (Differential mode is a later optimization.)
 
-pybatfish and pandas are imported lazily so the rest of nethelm imports cleanly
+pybatfish and pandas are imported lazily so the rest of netbrace imports cleanly
 on machines without them (unit tests never touch this module).
 """
 
