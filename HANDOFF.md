@@ -108,9 +108,12 @@ generate() → TaskSpec(oracle=pending)
 ### ✅ Task B — CLI skeleton · DONE
 `netbrace/cli.py` — all subcommands wired
 
-### ⏳ Task C — Run the oracle on the lab host · PENDING (needs live Batfish)
+### ✅ Task C — Run the oracle on the lab host · DONE (2026-06-07)
 
-This is the one task that requires the lab. Do it carefully.
+Ran end-to-end against live Batfish + 4-node FRR lab. Column names verified
+against `oracle.py` expectations (matched — no edit needed). 12-task v0 suite:
+all `oracle.status=ready`, all `deterministic=True`. Cross-checked vs live
+`vtysh show ip bgp summary`. See `progress.md` Day 19. Original procedure:
 
 1. Ensure Batfish is running on ports 9996/9997. `pip install -e ".[oracle]"`.
 2. **Verify column names FIRST (critical):** run ONE shut_neighbor task in a Python
