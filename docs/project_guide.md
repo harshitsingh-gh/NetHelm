@@ -82,7 +82,8 @@ NetHelm/                           ← git repo root (project is called NetBrace
 ├── external/                      ← cloned external repos
 │   └── netconfeval/
 ├── docs/
-│   ├── project_guide.md           ← this file
+│   ├── project_guide.md           ← this file (architecture, end-to-end)
+│   ├── authoring_topologies_and_scenarios.md  ← recipe: add new topologies/scenarios
 │   └── batfish_oracle_runbook.md  ← Batfish setup and oracle verification
 ├── scripts/
 │   ├── check_env.sh               ← environment sanity check

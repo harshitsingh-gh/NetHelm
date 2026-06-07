@@ -1,220 +1,172 @@
-# HANDOFF — NetBrace Safety Axis Implementation
+# HANDOFF — NetBrace safety axis
 
-> **Read this fully before writing any code.** It tells you exactly what exists,
-> what is already tested (and must NOT be changed), and the small, well-specified
-> pieces you are responsible for. Your job is **simple glue code** around a core
-> that is already written and verified. Do not redesign anything.
->
-> The full design rationale is in **`plan.md`** (repo root). This file is the
-> implementation guide. When in doubt, follow the function signatures here
-> literally and keep the unit tests green.
+> Read this before writing code. It is the resume point. The v0 single-dimension
+> safety axis (D1–D3) is done and tested; the multi-dimensional extension
+> (D4–D8) is built and partly oracle-backed on the `brainstorming-session`
+> branch (PR #1). This file says exactly what exists, what is frozen, and what
+> remains — in priority order.
 
 ---
 
-## 1. Environment — do this first
-
-A dev virtualenv already exists with the package installed editable:
+## 0. Resume in 60 seconds
 
 ```bash
-# from the repo root /home/harshitsingh/projects/NetHelm
-source harness/venvs/nethelm/bin/activate     # activate the venv
-python -m pytest tests/unit -q                 # MUST print "52 passed" before you start
-```
-
-To re-create the venv if needed:
-
-```bash
-python3 -m venv harness/venvs/nethelm
-harness/venvs/nethelm/bin/pip install -e ".[dev]"
-```
-
-Heavy deps (Batfish, Inspect, matplotlib) are optional extras:
-
-```bash
-harness/venvs/nethelm/bin/pip install -e ".[oracle]"   # pybatfish + pandas
-harness/venvs/nethelm/bin/pip install -e ".[eval]"     # inspect-ai
-harness/venvs/nethelm/bin/pip install -e ".[report]"   # matplotlib + pandas
-```
-
----
-
-## 2. Golden rules (follow these exactly)
-
-1. **Never edit these files** — they are tested and other code depends on their exact
-   behavior. If you think one needs changing, you are probably wrong; ask first.
-   - `netbrace/core/schemas.py`
-   - `netbrace/core/jsonio.py`, `ids.py`, `hashing.py`
-   - `netbrace/graders/sets.py`, `netbrace/graders/safety.py`
-   - `netbrace/evals/parser.py`
-   - `netbrace/topology/patches.py`
-   - `netbrace/tasks/safety/baseline_square4.py`, `generator.py`
-   - anything under `tests/unit/`
-2. **Run `python -m pytest tests/unit -q` after every change.** It must stay at
-   "52 passed" (plus any new tests you add). If a number drops, revert your last edit.
-3. **Reuse the existing schemas.** Every object you read or write is a Pydantic model
-   from `netbrace.core.schemas`. Use `netbrace.core.jsonio.write_model` / `read_model`
-   / `to_json` — never `json.dump` a model yourself.
-4. **Keep functions small and boring.** No clever metaprogramming. ~30 lines max.
-5. **Do not call a paid model API** until a human approves it. Any real run must be
-   `--limit 1` first and cost < $10.
-6. **One command, one artifact.** Every CLI subcommand prints the path it wrote.
-
----
-
-## 3. What exists and is working (DO NOT REBUILD)
-
-| File | What it gives you |
-|---|---|
-| `core/schemas.py` | `TaskSpec`, `BlastRadius`, `SessionLost`/`PrefixLost`/`ReachabilityLost`, `ModelPrediction`, `RunManifest`, `ScoreRecord`, `TypeMetrics`. |
-| `core/jsonio.py` | `to_json`, `write_model`, `read_model` |
-| `core/ids.py` | `task_id`, `run_id`, `prompt_id`, `slug` |
-| `core/hashing.py` | `sha256_text`, `suite_hash` |
-| `graders/safety.py` | `grade(prediction, ground_truth, ...) -> ScoreRecord` |
-| `evals/parser.py` | `parse_prediction(raw_text) -> BlastRadius | None` |
-| `topology/patches.py` | `apply_unified_diff(source, patch) -> str` |
-| `tasks/safety/generator.py` | `generate(GenerationSpec(count, intents)) -> list[TaskSpec]` |
-| `tasks/safety/baseline_square4.py` | 4-router configs, NODES, LOOPBACK_IP, WATCHED_PREFIXES, LINKS |
-| `batfish/oracle.py` | `BatfishOracle(host).compute(task)` — written, needs live Batfish run |
-| `storage/layout.py` | `write_suite`, `load_suite`, `write_task`, `load_task` |
-| `storage/run_store.py` | `create_run`, `write_sample`, `write_results_csv`, `write_run_manifest` |
-| `models/fake.py` | `FakeModel(mode)` — oracle/empty/garbage modes |
-| `evals/run_fake.py` | `run_fake(suite_dir, run_id, mode)` — zero-API pipeline |
-| `evals/scorers.py` | `blast_radius_scorer()` — Inspect AI scorer |
-| `evals/inspect_safety.py` | `safety_task(suite_dir, limit)` — Inspect AI Task |
-| `reporting/summarize.py` | `summarize(run_dir)` — writes `summary.json` |
-| `reporting/figures.py` | `f1_by_intent(run_dir, out_pdf)` — bar chart PDF |
-| `prompts/safety_direct_v0.md` | System prompt + Jinja2 task template |
-| `cli.py` | `netbrace` CLI — generate, validate, oracle, fake, run, grade, report |
-| `scripts/check_env.sh` | Environment sanity check |
-| `scripts/smoke_safety_v0.sh` | End-to-end smoke test |
-| `routers/containerlab_readonly.py` | Read-only vtysh wrappers for live FRR nodes |
-
-**Data flow:**
-```
-generate() → TaskSpec(oracle=pending)
-   → BatfishOracle.compute() fills oracle.blast_radius   [code done, needs lab run — Task C]
-      → model predicts → parse_prediction()
-         → grade()
-            → write_results_csv() → summarize() → f1_by_intent()
-```
-
----
-
-## 4. TASK STATUS
-
-### ✅ Task A — Storage layer · DONE
-`netbrace/storage/layout.py` — 5 unit tests in `tests/unit/test_storage.py`
-
-### ✅ Task B — CLI skeleton · DONE
-`netbrace/cli.py` — all subcommands wired
-
-### ⏳ Task C — Run the oracle on the lab host · PENDING (needs live Batfish)
-
-This is the one task that requires the lab. Do it carefully.
-
-1. Ensure Batfish is running on ports 9996/9997. `pip install -e ".[oracle]"`.
-2. **Verify column names FIRST (critical):** run ONE shut_neighbor task in a Python
-   shell, print `df.columns.tolist()` for the `bgpSessionStatus` and `routes` frames.
-   Expected: `Node`, `Remote_IP`, `Established_Status`, `Network`, `VRF`. If any
-   differ, fix them in `oracle.py` and re-run `pytest tests/unit -q`.
-3. Run:
-   ```bash
-   netbrace safety generate --count 12 --out tasks/safety/v0
-   netbrace safety oracle --suite tasks/safety/v0 --host 127.0.0.1
-   netbrace safety validate --suite tasks/safety/v0 --require-oracle
-   ```
-4. Manually inspect 1-2 oracle outputs vs `show ip bgp summary` from the live router.
-5. Resolve plan.md §14 Q2/Q3: does removing neighbor lines drop the session? Does the
-   RIB change? Whatever Batfish says IS ground truth.
-
-### ✅ Task D — Fake model + run store · DONE
-`netbrace/models/fake.py`, `netbrace/storage/run_store.py`, `netbrace/evals/run_fake.py`
-4 unit tests in `tests/unit/test_run_store.py`
-
-### ✅ Task E — Reporting · DONE
-`netbrace/reporting/summarize.py`, `netbrace/reporting/figures.py`
-
-### ✅ Task F — Inspect AI integration · DONE
-`netbrace/evals/inspect_safety.py`, `netbrace/evals/scorers.py`
-
-Acceptance (human approves spend):
-```bash
-netbrace eval run --suite tasks/safety/v0 --model openai/gpt-4o --limit 1 --run-id smoke_gpt4o
-```
-
-### ✅ Task G — Prompt template · DONE
-`netbrace/prompts/safety_direct_v0.md`
-
-### ✅ Task H — Scripts + read-only lab helper · DONE
-`scripts/check_env.sh`, `scripts/smoke_safety_v0.sh`, `netbrace/routers/containerlab_readonly.py`
-
----
-
-## 5. Definition of done
-
-```bash
+cd ~/projects/NetHelm
+git checkout brainstorming-session              # PR #1; not yet merged to main
 source harness/venvs/nethelm/bin/activate
-python -m pytest tests/unit -q                                       # 52+ green
-netbrace safety generate --count 12 --out tasks/safety/v0
-netbrace safety oracle   --suite tasks/safety/v0 --host 127.0.0.1   # Task C (lab)
-netbrace safety validate --suite tasks/safety/v0 --require-oracle
-netbrace eval fake       --suite tasks/safety/v0 --run-id fake_check
-netbrace eval run        --suite tasks/safety/v0 --model openai/gpt-4o --limit 1 --run-id smoke
-netbrace report          --run runs/smoke --figures paper/figures
+pip install -e ".[oracle]"                       # pybatfish + pandas
+python -m pytest tests/unit -q                   # must print "91 passed"
+# Batfish must be up on 127.0.0.1:9996/9997 for any oracle/run command.
+python scripts/run_extended_scenario.py --scenario blackhole   # zero-API smoke
 ```
 
-Only **Task C** remains. Everything else is done and smoke-tested.
-
-## 6. If you get stuck
-
-- Unit test red after your change → revert; the core is correct.
-- Batfish column name mismatch → `df.columns.tolist()` and adjust `oracle.py`.
-- Model output won't parse → expected; it scores `invalid`. Do not loosen the parser.
-- Networking question (does this change break that session?) → lab question, ask a human.
+Read `docs/multidimensional_blast_radius.md` first — it is the complete
+end-to-end guide (dimensions, architecture, how to run, how to add scenarios,
+results). This file only tracks status + remaining work.
 
 ---
 
-## 7. Session completed (2026-06-07)
+## 1. Golden rules (unchanged — do not break)
 
-### What was done:
+1. **Never edit the frozen v0 core.** Other code and the suite hash depend on
+   exact behavior. Add new modules instead (that is how all D4–D8 work was done):
+   `core/schemas.py`, `core/jsonio.py`, `ids.py`, `hashing.py`,
+   `graders/sets.py`, `graders/safety.py`, `evals/parser.py`,
+   `topology/patches.py`, `tasks/safety/baseline_square4.py`,
+   `tasks/safety/generator.py`, anything under `tests/unit/` that already passes.
+2. **Run `pytest tests/unit -q` after every change.** Keep it green (91+).
+3. **Reuse the schemas / jsonio helpers.** Never `json.dump` a model by hand.
+4. **Small, boring functions.** ~30 lines.
+5. **No paid model API without human approval.** Always `--limit 1` / one call
+   first, confirm cost < $10. (Real runs so far: Claude Haiku 4.5, pennies.)
+6. **One command, one artifact** — every CLI/script prints the path it wrote.
 
-1. **Full project rename** `nethelm` → `netbrace`: Python package directory,
-   all imports, pyproject.toml entry points, all markdown files. Schema version
-   Literal strings (`nethelm.task.v0` etc.) intentionally preserved as JSON
-   protocol identifiers.
+---
 
-2. **Task A — Storage** (`netbrace/storage/layout.py`):
-   `write_suite`, `load_suite`, `write_task`, `load_task`. Suite hash in manifest.json.
+## 2. What exists now (built + tested)
 
-3. **Task B — CLI** (`netbrace/cli.py`):
-   Full argparse CLI. Commands: `safety generate`, `safety validate`, `safety oracle`,
-   `eval fake`, `eval run`, `grade`, `report`. All wired to their implementation.
+### v0 (D1–D3) — DONE, live-oracle verified
+- Generator → suite → Batfish oracle → fake/real eval → grade → report.
+- `netbrace/cli.py` (`safety generate|validate|oracle`, `eval fake|run`,
+  `grade`, `report`). Committed v0 suite + oracle ground truth in
+  `tasks/safety/v0/`. See `docs/project_guide.md`.
 
-4. **Task D — Fake model + run store**:
-   - `netbrace/models/fake.py`: FakeModel with oracle/empty/garbage modes.
-   - `netbrace/storage/run_store.py`: create_run, write_sample, write_results_csv,
-     write_run_manifest.
-   - `netbrace/evals/run_fake.py`: zero-API end-to-end grading loop.
+### Multi-dimensional (D4–D8) — built; D4/D5/D7 oracle-backed
+| File | Role |
+|---|---|
+| `core/dimensions.py` | 5 new typed elements + `ExtendedBlastRadius` (composes v0 BlastRadius over 8 types) |
+| `graders/extended.py` | `grade_extended()` + `ExtendedScoreRecord` (reuses frozen `sets.py`) |
+| `batfish/extended_oracle.py` | `ExtendedOracle.compute(scenario)` — **unified**, all dims on one snapshot pair; D1–D5 + D7 implemented |
+| `tasks/safety/scenarios.py` | `Scenario` dataclass + `REGISTRY` (waypoint, blackhole, ecmp) |
+| `tasks/safety/baseline_waypoint4.py` | D4 topology (2 disjoint paths) |
+| `tasks/safety/baseline_ecmp4.py` | D5 topology (2 equal-cost paths) |
+| `tasks/safety/scenario_blackhole.py` | D7 change on the square4 baseline |
+| `evals/extended_parser.py` | tolerant raw-text → ExtendedBlastRadius (8-D) |
+| `prompts/safety_extended_v0.md` | the 8-D output contract |
+| `models/fake_extended.py` | zero-API ExtendedFakeModel + flat serializer |
+| `scripts/run_extended_scenario.py` | prompt→model→parse→grade runner (fake or Claude) |
+| `scripts/demo_extended_waypoint.py`, `demo_extended_blackhole.py` | focused demos |
 
-5. **Task E — Reporting**:
-   - `netbrace/reporting/summarize.py`: aggregates + summary.json.
-   - `netbrace/reporting/figures.py`: matplotlib bar chart PDF.
+Tests: `tests/unit/test_dimensions.py`, `test_extended_grader.py`,
+`test_extended_parser.py`, `test_fake_extended.py`, `test_waypoint_baseline.py`,
+`test_blackhole_scenario.py`, `test_ecmp_scenario.py`,
+`test_scenarios_registry.py`. **52 → 91 green.**
 
-6. **Task F — Inspect AI integration**:
-   - `netbrace/evals/scorers.py`: blast_radius_scorer() wrapping grade().
-   - `netbrace/evals/inspect_safety.py`: safety_task(), _build_prompt(), system prompt.
+Verified facts (don't re-derive):
+- Batfish column names match `oracle.py` (`Node`, `Remote_IP`, `VRF`,
+  `Established_Status`; `Node`, `Network`, `VRF`, `Next_Hop_IP`).
+- Blackhole disposition string is `NO_ROUTE`; delivered set is
+  `{ACCEPTED, DELIVERED_TO_SUBNET, EXITS_NETWORK}`.
+- The blackhole change's TRUE blast radius (unified oracle) is 4-D:
+  `r1→10.0.0.4` + `r4→10.0.0.1` session losses, `r1` prefix `10.0.0.4/32`,
+  `r1→10.0.0.4` reachability, and the `r1` blackhole.
 
-7. **Task G — Prompt template** (`netbrace/prompts/safety_direct_v0.md`):
-   System contract + Jinja2 task template under one page.
+---
 
-8. **Task H — Scripts + lab helper**:
-   - `scripts/check_env.sh`: python, import, Batfish port, CLI.
-   - `scripts/smoke_safety_v0.sh`: generate → fake eval → report assertions.
-   - `netbrace/routers/containerlab_readonly.py`: show_bgp_summary, show_ip_route,
-     show_running_config, show_bgp_neighbors (READ ONLY, subprocess/vtysh).
+## 3. What remains — in priority order
 
-### Test baseline: **52 passed** (was 42 before this session; +10 new)
+### P1 — Merge PR #1 to main
+Branch `brainstorming-session`, PR #1. Review, then merge. Everything below is
+extension work that can happen on new branches off main.
 
-### End-to-end smoke: `bash scripts/smoke_safety_v0.sh` — PASS
+### P2 — Multi-sample × model-fleet sweep (this is the paper figure)
+Current real-model numbers are **single Claude Haiku calls** — model output is
+stochastic (the waypoint run hallucinated a redundancy loss on one sample). For
+any number that goes in the paper:
+- Run N≥5 samples per (scenario, model); report mean ± std of macro-F1 and the
+  per-dimension P/R/F1.
+- Fleet: at least `anthropic/claude-haiku-4-5-20251001`,
+  `anthropic/claude-sonnet-4-6`, `openai/gpt-4o` (add `--model openai/...`
+  support to `run_extended_scenario.py` — currently only `anthropic/` and
+  `fake` are wired; the v0 `eval run` path uses Inspect for OpenAI).
+- Add a `--samples N` flag to the runner and aggregate into a CSV +
+  `reporting/` figure. Reuse `reporting/summarize.py` / `figures.py` patterns.
+- Decide on a sampling temperature; record it in the run manifest.
 
-### Remaining: Task C (oracle) — needs `batfish/allinone:netbrace` container running.
+### P3 — D6 (filter) oracle
+Schema + grader + parser + prompt already handle `FilterDelta`. Missing: a
+`compute_filter` that diffs ACL behavior. **Batfish does NOT model FRR ACLs as
+interface packet filters**, so this needs a **vendor config** (Cisco IOS /
+Arista / Juniper) snapshot. Plan:
+- Add a small IOS/Arista baseline with an ACL applied to an interface (new
+  `baseline_acl_*.py`); the change reorders/over-blocks an ACE (scenario S03/S04).
+- `ExtendedOracle._filter_diff` via Batfish `searchFilters` differential →
+  `FilterDelta(transition=permit_to_deny | deny_to_permit)`.
+- This also unblocks a second config dialect in the harness (good for the paper).
+
+### P4 — D8 (scale) oracle
+`ScaleViolation` exists. Needs a per-device resource budget (FIB/RIB/label/TCAM
+limit) as an annotation, then count installed routes pre/post and flag overflow.
+Scenario S20 (de-aggregation). Pure-Batfish for the count; the *limit* is a spec
+field — add `resource_limits: dict[node, dict[resource,int]]` to `Scenario`.
+
+### P5 — Grader-validity (κ ≥ 0.7) for D4–D8
+Per CLAUDE.md accuracy bar: hand-label a 100-task subset and check Cohen's κ
+against the oracle for the new dimensions before publishing any number. D4/D6 are
+the hard ones (subjective intent). Budget a labelling pass.
+
+### P6 — Live-emulator (hybrid) scenarios
+The catalog's hybrid scenarios (MTU/PMTUD blackhole, transient microloops,
+stateful-firewall asymmetry, NAT data-plane, FIB overflow behavior) need
+containerlab/Mininet, not static Batfish. Decide whether the paper needs them or
+whether the static-gradeable set is enough for v1. NetPress/NIKA both pair a
+generator with an emulator for exactly this.
+
+### P7 — Generalize the v0 generator to new topologies (optional)
+`tasks/safety/generator.py` is frozen and hardcodes square4. The new scenarios
+bypass it (they build configs directly). If we want the full generate→suite→
+oracle CLI flow for the new topologies, parameterize the baseline in a NEW
+generator module (don't edit the frozen one).
+
+### P8 — Wire extended path into the CLI / Inspect (optional)
+`run_extended_scenario.py` is a standalone script. For parity with v0, add a
+`netbrace eval extended` subcommand and/or an Inspect task + scorer for the 8-D
+format (mirror `evals/inspect_safety.py` + `scorers.py`).
+
+---
+
+## 4. Gotchas / notes for whoever resumes
+
+- **Model nondeterminism**: re-running a real model gives different predictions.
+  Don't treat a single call as ground truth about the model — sample N.
+- **The unified oracle is the source of truth**, not the per-dimension
+  `compute_*` helpers (those are kept only for the focused demos). Use
+  `ExtendedOracle.compute(scenario)`.
+- **Adding a dimension to a scenario** = add the probe list to its `Scenario`
+  builder in `scenarios.py`. Empty probe list → that dimension isn't scored.
+- **Sanity gate for a new scenario**: `run_extended_scenario.py --scenario X`
+  with the default fake oracle mode must be an exact pass (1.0). If not, the
+  oracle and the fake serializer disagree — fix before trusting it.
+- **`runs/` and `paper/figures/` are gitignored** — experiment outputs stay
+  local and are reproducible from the scripts.
+- Anthropic SDK is installed in the venv; `ANTHROPIC_API_KEY` must be exported
+  to run a real model. OpenAI path not yet added to the extended runner.
+
+---
+
+## 5. Key references
+- `docs/multidimensional_blast_radius.md` — full end-to-end guide (read first).
+- `docs/authoring_topologies_and_scenarios.md` — build a verified topology.
+- `paper/refs/blast_radius_scenario_catalog.md` — 20 scenarios + oracle ledger.
+- `docs/project_guide.md` — v0 architecture. `docs/batfish_oracle_runbook.md` —
+  Batfish setup. `plan.md` — original design + open questions.
