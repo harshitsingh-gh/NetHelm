@@ -1,17 +1,15 @@
 #!/usr/bin/env python
 """Run an extended-dimension scenario end to end: prompt -> model -> parse -> grade.
 
-Default model is the zero-API ExtendedFakeModel (proves the full loop). The same
-command runs a REAL model (e.g. Claude) by passing --model anthropic/<id> with
-ANTHROPIC_API_KEY set — that path calls a paid API, so it is never the default.
+Ground truth comes from the UNIFIED oracle (ExtendedOracle.compute), which fills
+every dimension on one pair of snapshots. Default model is the zero-API
+ExtendedFakeModel; pass --model anthropic/<id> (with ANTHROPIC_API_KEY) to score
+a real model like Claude — that path calls a paid API, so it is never the default.
 
 Examples
 --------
-    # zero API: prove the loop on the live waypoint oracle
     python scripts/run_extended_scenario.py --scenario waypoint
-
-    # real model (PAID — needs ANTHROPIC_API_KEY; do --limit-style single runs)
-    python scripts/run_extended_scenario.py --scenario blackhole --model anthropic/claude-sonnet-4-6
+    python scripts/run_extended_scenario.py --scenario blackhole --model anthropic/claude-haiku-4-5-20251001
 
 Requires a running Batfish (for the oracle) and the [oracle] extra.
 """
@@ -19,76 +17,29 @@ Requires a running Batfish (for the oracle) and the [oracle] extra.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
 
 from netbrace.batfish.extended_oracle import ExtendedOracle
-from netbrace.core.dimensions import ExtendedBlastRadius
 from netbrace.evals.extended_parser import parse_extended_prediction
 from netbrace.graders.extended import grade_extended
 from netbrace.models.fake_extended import ExtendedFakeModel
-from netbrace.tasks.safety import baseline_ecmp4 as ec
-from netbrace.tasks.safety import baseline_waypoint4 as wp
-from netbrace.tasks.safety import scenario_blackhole as bh
-from netbrace.topology.patches import apply_unified_diff
+from netbrace.tasks.safety import scenarios
 
 _PROMPT_MD = Path(__file__).resolve().parents[1] / "netbrace/prompts/safety_extended_v0.md"
 
 
-def _oracle_truth(scenario: str, host: str) -> tuple[ExtendedBlastRadius, dict]:
-    """Compute live Batfish ground truth + the prompt context for a scenario."""
-    oracle = ExtendedOracle(host=host)
-    if scenario == "waypoint":
-        pre = wp.baseline_configs()
-        post = dict(pre)
-        post[wp.CHANGE_TARGET] = apply_unified_diff(post[wp.CHANGE_TARGET], wp.change_patch())
-        truth = oracle.compute_waypoint(pre, post, wp.WAYPOINT_INTENTS)
-        ctx = {
-            "name": "waypoint4", "nodes": wp.NODES, "configs": pre,
-            "description": "Reroute src->dst (10.0.0.4/32) off the `way` node onto `alt`.",
-            "patch": wp.change_patch(), "watched": wp.WATCHED_PREFIXES,
-            "intents": "src->10.0.0.4/32 MUST transit `way` (inspection node).",
-        }
-    elif scenario == "blackhole":
-        pre = bh.baseline_configs()
-        post = dict(pre)
-        post[bh.CHANGE_TARGET] = apply_unified_diff(post[bh.CHANGE_TARGET], bh.change_patch())
-        truth = oracle.compute_forwarding(pre, post, bh.PROBE_FLOWS)
-        ctx = {
-            "name": "square4", "nodes": bh.baseline_configs().keys(), "configs": pre,
-            "description": "Remove r1's static route to 10.0.0.4/32 (looks redundant).",
-            "patch": bh.change_patch(), "watched": bh.WATCHED_PREFIXES,
-            "intents": "All loopbacks must remain reachable from every node.",
-        }
-    elif scenario == "ecmp":
-        pre = ec.baseline_configs()
-        post = dict(pre)
-        post[ec.CHANGE_TARGET] = apply_unified_diff(post[ec.CHANGE_TARGET], ec.change_patch())
-        truth = oracle.compute_redundancy(pre, post, ec.REDUNDANCY_TARGETS)
-        ctx = {
-            "name": "ecmp4", "nodes": ec.NODES, "configs": pre,
-            "description": "Remove one of src's two equal-cost static routes to 10.0.0.4/32.",
-            "patch": ec.change_patch(), "watched": ec.WATCHED_PREFIXES,
-            "intents": "src->10.0.0.4/32 must keep 2 equal-cost paths for resilience.",
-        }
-    else:
-        raise SystemExit(f"unknown scenario {scenario!r} (use waypoint|blackhole|ecmp)")
-    return truth, ctx
-
-
-def _build_prompt(ctx: dict) -> str:
+def _build_prompt(scn: scenarios.Scenario) -> str:
     """System contract (from the template md) + a concrete task block."""
-    md = _PROMPT_MD.read_text(encoding="utf-8")
-    system = md.split("## TASK TEMPLATE")[0].strip()
-    cfgs = "\n".join(f"#### {n}\n```\n{c}\n```" for n, c in sorted(ctx["configs"].items()))
+    system = _PROMPT_MD.read_text(encoding="utf-8").split("## TASK TEMPLATE")[0].strip()
+    cfgs = "\n".join(f"#### {n}\n```\n{c}\n```" for n, c in sorted(scn.pre_configs.items()))
     task = (
-        f"## TASK\n\n### Topology: {ctx['name']}\n"
-        f"Nodes: {', '.join(ctx['nodes'])}\n\n"
-        f"### Intents\n{ctx['intents']}\n\n"
+        f"## TASK\n\n### Topology: {scn.name}\n"
+        f"Nodes: {', '.join(scn.nodes)}\n\n"
+        f"### Intents\n{scn.intents_text}\n\n"
         f"### Baseline configuration\n{cfgs}\n\n"
-        f"### Proposed change\n{ctx['description']}\n\n```diff\n{ctx['patch']}```\n\n"
-        f"Watched prefixes: {', '.join(ctx['watched'])}\n\n"
+        f"### Proposed change\n{scn.description}\n\n```diff\n{scn.patch}```\n\n"
+        f"Watched prefixes: {', '.join(scn.watched_prefixes)}\n\n"
         f"What is the blast radius across all eight dimensions?"
     )
     return f"{system}\n\n{task}"
@@ -109,16 +60,17 @@ def _call_anthropic(model_id: str, prompt: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scenario", required=True, choices=["waypoint", "blackhole", "ecmp"])
+    ap.add_argument("--scenario", required=True, choices=sorted(scenarios.REGISTRY))
     ap.add_argument("--model", default="fake",
-                    help="'fake' (zero API) or 'anthropic/<id>' / 'openai/<id>' (PAID)")
+                    help="'fake' (zero API) or 'anthropic/<id>' (PAID)")
     ap.add_argument("--mode", default="oracle", choices=["oracle", "empty", "garbage"],
                     help="ExtendedFakeModel mode (only used when --model fake)")
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
-    truth, ctx = _oracle_truth(args.scenario, args.host)
-    prompt = _build_prompt(ctx)
+    scn = scenarios.build(args.scenario)
+    truth = ExtendedOracle(host=args.host).compute(scn)
+    prompt = _build_prompt(scn)
 
     if args.model == "fake":
         raw = ExtendedFakeModel(args.mode).respond(truth)
