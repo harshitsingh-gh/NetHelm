@@ -8,7 +8,7 @@
 > reading + paper outline per the execution plan. NetConfEval (Phase 1
 > Week 2) gets a head-start.
 > **Host:** `hungrykirby` (Ubuntu 24.x kernel 7.0.0-15-generic, 96 GB RAM,
-> 2 TB disk, x86_64). Repo at `~/projects/NetHelm`. Containerlab 0.75.0,
+> 2 TB disk, x86_64). Repo at `~/projects/NetBrace`. Containerlab 0.75.0,
 > Docker 29.5.2 already installed.
 > **Time budget:** ~6 hr/day × 3 = 18 hr. Treat this as a sprint week.
 
@@ -28,7 +28,7 @@
 
 **[30 min] Pre-flight on the host**
 ```bash
-cd ~/projects/NetHelm
+cd ~/projects/NetBrace
 git pull
 docker info | head -20            # confirm daemon healthy
 df -h /var/lib/docker             # confirm > 50 GB free for images
@@ -36,7 +36,7 @@ containerlab inspect -a           # confirm frrsq is still up
 ```
 If `frrsq` is **not** running:
 ```bash
-cd ~/projects/NetHelm/harness/lab
+cd ~/projects/NetBrace/harness/lab
 sudo containerlab deploy -t frr_square.clab.yml
 ```
 
@@ -49,7 +49,7 @@ sudo containerlab deploy -t frr_square.clab.yml
 
 ```bash
 docker pull batfish/allinone:2025.07.07
-docker tag  batfish/allinone:2025.07.07 batfish/allinone:nethelm
+docker tag  batfish/allinone:2025.07.07 batfish/allinone:netbrace
 
 # Persistent volume so snapshots survive container restarts.
 docker volume create batfish-data
@@ -61,7 +61,7 @@ docker run -d \
   -p 127.0.0.1:8888:8888 \
   -p 127.0.0.1:9996:9996 \
   -p 127.0.0.1:9997:9997 \
-  batfish/allinone:nethelm
+  batfish/allinone:netbrace
 
 # Confirm it's up.
 docker logs --tail 30 batfish
@@ -75,12 +75,12 @@ ss -tlnp | grep -E '8888|9996|9997'
 sudo apt-get update
 sudo apt-get install -y python3.12-venv python3-pip git build-essential
 
-mkdir -p ~/projects/NetHelm/harness/venvs
-python3 -m venv ~/projects/NetHelm/harness/venvs/batfish
-source ~/projects/NetHelm/harness/venvs/batfish/bin/activate
+mkdir -p ~/projects/NetBrace/harness/venvs
+python3 -m venv ~/projects/NetBrace/harness/venvs/batfish
+source ~/projects/NetBrace/harness/venvs/batfish/bin/activate
 pip install --upgrade pip wheel
 pip install --upgrade pybatfish pandas jupyterlab matplotlib
-pip freeze > ~/projects/NetHelm/harness/venvs/batfish-requirements.txt
+pip freeze > ~/projects/NetBrace/harness/venvs/batfish-requirements.txt
 ```
 Pin a requirements file so summer-you can recreate. Commit
 `harness/venvs/batfish-requirements.txt` (the `venvs/` directory itself
@@ -102,10 +102,10 @@ snapshot/
 FRR is supported as the `frr` format; per-device file naming = hostname.
 
 ```bash
-SNAP=~/projects/NetHelm/runs/2026-05-27_batfish_frrsq/snapshot
+SNAP=~/projects/NetBrace/runs/2026-05-27_batfish_frrsq/snapshot
 mkdir -p "$SNAP/configs"
 for r in r1 r2 r3 r4; do
-  cp ~/projects/NetHelm/harness/lab/frr_square/configs/$r/frr.conf \
+  cp ~/projects/NetBrace/harness/lab/frr_square/configs/$r/frr.conf \
      "$SNAP/configs/$r.conf"
 done
 ```
@@ -158,7 +158,7 @@ print(trace)
 ```
 Run it:
 ```bash
-cd ~/projects/NetHelm/runs/2026-05-27_batfish_frrsq
+cd ~/projects/NetBrace/runs/2026-05-27_batfish_frrsq
 python query.py | tee query_output.txt 2>&1
 ```
 **Pass criteria (write these into the README):**
@@ -187,17 +187,17 @@ This bleeds into Phase 1 Week 2 work, but it removes the highest-risk
 unknown (does the upstream repo still install cleanly?) early.
 
 ```bash
-mkdir -p ~/projects/NetHelm/external
-cd ~/projects/NetHelm/external
+mkdir -p ~/projects/NetBrace/external
+cd ~/projects/NetBrace/external
 git clone https://github.com/RedHatResearch/conext24-NetConfEval.git netconfeval
 cd netconfeval
 git log -1 --format='%H %ci'   # record the pinned commit in your notes
 
-python3 -m venv ~/projects/NetHelm/harness/venvs/netconfeval
-source ~/projects/NetHelm/harness/venvs/netconfeval/bin/activate
+python3 -m venv ~/projects/NetBrace/harness/venvs/netconfeval
+source ~/projects/NetBrace/harness/venvs/netconfeval/bin/activate
 pip install --upgrade pip wheel
 pip install -r requirements.txt
-pip freeze > ~/projects/NetHelm/harness/venvs/netconfeval-requirements.txt
+pip freeze > ~/projects/NetBrace/harness/venvs/netconfeval-requirements.txt
 
 # Confirm HF dataset can be reached (no download yet, just resolve).
 python - <<'PY'
@@ -276,7 +276,7 @@ We *clone* `frr_square` rather than mutate it, because the verified FRR
 snapshot is your baseline-of-record for Batfish reproducibility tests.
 
 ```bash
-cd ~/projects/NetHelm/harness/lab
+cd ~/projects/NetBrace/harness/lab
 mkdir -p frr_square_mixed/configs/ceos1
 cp -r frr_square/configs/r1 frr_square_mixed/configs/
 cp -r frr_square/configs/r2 frr_square_mixed/configs/
@@ -301,16 +301,16 @@ topology:
   nodes:
     r1:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r1/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r1/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r1/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r1/frr.conf:/etc/frr/frr.conf
     r2:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r2/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r2/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r2/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r2/frr.conf:/etc/frr/frr.conf
     r3:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r3/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square_mixed/configs/r3/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r3/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square_mixed/configs/r3/frr.conf:/etc/frr/frr.conf
     ceos1:
       kind: arista_ceos
       startup-config: frr_square_mixed/configs/ceos1/startup.cfg
@@ -393,7 +393,7 @@ end
 
 **[45 min] Deploy + verify**
 ```bash
-cd ~/projects/NetHelm/harness/lab
+cd ~/projects/NetBrace/harness/lab
 # tear down the original lab first to free interface MACs
 sudo containerlab destroy -t frr_square.clab.yml --cleanup
 sudo containerlab deploy  -t frr_square_mixed.clab.yml
@@ -421,14 +421,14 @@ config before moving on.
 Don't lose your baseline. The two labs can run side-by-side; they use
 different docker network names (`clab-frrsq` vs `clab-frrsqm`).
 ```bash
-cd ~/projects/NetHelm/harness/lab
+cd ~/projects/NetBrace/harness/lab
 sudo containerlab deploy -t frr_square.clab.yml
 ```
 
 **[15 min] DNM legal ticket re-ping**
 Per progress.md you flagged this as own action item but the original
 filing slipped. Send a short follow-up email today, with subject
-prefix `[NetHELM data-release] re-ping`. One sentence: *"Re-flagging the
+prefix `[NetBrace data-release] re-ping`. One sentence: *"Re-flagging the
 ticket from May 24 for any update; need a yes/no decision by mid-July
 to plan paper §6."*
 
@@ -486,7 +486,7 @@ topology:
 ```
 Deploy and verify SSH works:
 ```bash
-cd ~/projects/NetHelm/harness/lab
+cd ~/projects/NetBrace/harness/lab
 sudo containerlab deploy -t crpd_solo.clab.yml
 sleep 30
 sudo containerlab inspect -t crpd_solo.clab.yml
@@ -511,17 +511,17 @@ realistic baseline.
 
 ```bash
 # On the host:
-mkdir -p ~/projects/NetHelm/harness/lab/crpd_solo/keys
-ssh-keygen -t ed25519 -N '' -C 'nethelm-mcp' \
-  -f ~/projects/NetHelm/harness/lab/crpd_solo/keys/id_mcp
+mkdir -p ~/projects/NetBrace/harness/lab/crpd_solo/keys
+ssh-keygen -t ed25519 -N '' -C 'netbrace-mcp' \
+  -f ~/projects/NetBrace/harness/lab/crpd_solo/keys/id_mcp
 
 # Copy pubkey into cRPD root authorized_keys
-PUB=$(cat ~/projects/NetHelm/harness/lab/crpd_solo/keys/id_mcp.pub)
+PUB=$(cat ~/projects/NetBrace/harness/lab/crpd_solo/keys/id_mcp.pub)
 docker exec clab-crpdsolo-crpd1 bash -c \
   "mkdir -p /root/.ssh && echo '$PUB' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
 
 # Verify key auth works:
-ssh -i ~/projects/NetHelm/harness/lab/crpd_solo/keys/id_mcp \
+ssh -i ~/projects/NetBrace/harness/lab/crpd_solo/keys/id_mcp \
     -o StrictHostKeyChecking=no \
     root@<crpd1-mgmt-ip> 'cli -c "show version"'
 ```
@@ -529,16 +529,16 @@ ssh -i ~/projects/NetHelm/harness/lab/crpd_solo/keys/id_mcp \
 
 **[60 min] Install + run junos-mcp-server**
 ```bash
-cd ~/projects/NetHelm/external
+cd ~/projects/NetBrace/external
 git clone https://github.com/Juniper/junos-mcp-server.git
 cd junos-mcp-server
 git checkout v1.1.1     # current release per upstream
 
-python3 -m venv ~/projects/NetHelm/harness/venvs/jmcp
-source ~/projects/NetHelm/harness/venvs/jmcp/bin/activate
+python3 -m venv ~/projects/NetBrace/harness/venvs/jmcp
+source ~/projects/NetBrace/harness/venvs/jmcp/bin/activate
 pip install --upgrade pip wheel
 pip install -r requirements.txt
-pip freeze > ~/projects/NetHelm/harness/venvs/jmcp-requirements.txt
+pip freeze > ~/projects/NetBrace/harness/venvs/jmcp-requirements.txt
 ```
 
 Create `harness/lab/crpd_solo/devices.json` (replace `<IP>` with the
@@ -551,7 +551,7 @@ cRPD mgmt IP from `containerlab inspect`):
     "username": "root",
     "auth": {
       "type": "ssh_key",
-      "private_key_path": "/home/harshitsingh/projects/NetHelm/harness/lab/crpd_solo/keys/id_mcp"
+      "private_key_path": "/home/harshitsingh/projects/NetBrace/harness/lab/crpd_solo/keys/id_mcp"
     }
   }
 }
@@ -559,8 +559,8 @@ cRPD mgmt IP from `containerlab inspect`):
 
 Start MCP with stdio transport (simplest, no auth needed):
 ```bash
-cd ~/projects/NetHelm/external/junos-mcp-server
-python jmcp.py -f ~/projects/NetHelm/harness/lab/crpd_solo/devices.json -t stdio
+cd ~/projects/NetBrace/external/junos-mcp-server
+python jmcp.py -f ~/projects/NetBrace/harness/lab/crpd_solo/devices.json -t stdio
 ```
 This stays foreground and waits for an MCP client to attach over stdio.
 Kill with Ctrl-C after the smoketest below.
@@ -571,7 +571,7 @@ For Phase 0, the cleanest smoketest is the official `mcp` Python client
 talking to the same process via stdio. Open a *new* terminal:
 
 ```bash
-source ~/projects/NetHelm/harness/venvs/jmcp/bin/activate
+source ~/projects/NetBrace/harness/venvs/jmcp/bin/activate
 pip install mcp
 ```
 
@@ -588,7 +588,7 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-REPO   = Path.home() / "projects/NetHelm"
+REPO   = Path.home() / "projects/NetBrace"
 JMCP   = REPO / "external/junos-mcp-server/jmcp.py"
 DEVS   = REPO / "harness/lab/crpd_solo/devices.json"
 OUTPUT = REPO / "harness/lab/crpd_solo/verify_mcp_2026-05-29.txt"
@@ -625,8 +625,8 @@ asyncio.run(main())
 Run with the previous MCP foreground process **stopped** (the smoketest
 spawns its own):
 ```bash
-python ~/projects/NetHelm/harness/lab/crpd_solo/smoketest.py
-cat ~/projects/NetHelm/harness/lab/crpd_solo/verify_mcp_2026-05-29.txt
+python ~/projects/NetBrace/harness/lab/crpd_solo/smoketest.py
+cat ~/projects/NetBrace/harness/lab/crpd_solo/verify_mcp_2026-05-29.txt
 ```
 **Pass criteria:**
 - `tools` list includes `execute_junos_command`, `get_junos_config`,
@@ -636,8 +636,8 @@ cat ~/projects/NetHelm/harness/lab/crpd_solo/verify_mcp_2026-05-29.txt
 
 **[60 min] NetConfEval step-1 against GPT-4o (one task, sanity)**
 ```bash
-cd ~/projects/NetHelm/external/netconfeval
-source ~/projects/NetHelm/harness/venvs/netconfeval/bin/activate
+cd ~/projects/NetBrace/external/netconfeval
+source ~/projects/NetBrace/harness/venvs/netconfeval/bin/activate
 
 export OPENAI_API_KEY=...    # your key; do NOT commit
 # Inspect what step_1 expects:
@@ -649,7 +649,7 @@ python step_1_formal_spec_translation.py \
     --policy_types reachability \
     --batch_size 1 \
     --n_runs 1 \
-    --results_path ~/projects/NetHelm/runs/2026-05-29_netconfeval_gpt4o
+    --results_path ~/projects/NetBrace/runs/2026-05-29_netconfeval_gpt4o
 ```
 Capture stdout + the `results_path` JSON to
 `runs/2026-05-29_netconfeval_gpt4o/`. Estimated cost: < $1 for a single

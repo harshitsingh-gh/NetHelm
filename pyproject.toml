@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbrace"
+version = "0.0.1"
+description = "NetBrace safety axis — LLM blast-radius prediction benchmark (HotNets 2026)"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2",
+  "pyyaml",
+  "jinja2",
+]
+
+[project.optional-dependencies]
+# Heavier deps, installed only where needed. Keep the core import-light so unit
+# tests run on any machine without Docker/Batfish/API keys.
+oracle = ["pybatfish", "pandas"]
+eval = ["inspect-ai"]
+report = ["matplotlib", "pandas"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+netbrace = "netbrace.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["netbrace*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "batfish: integration tests that require a running Batfish (lab host only)",
+  "containerlab: tests that require Docker + containerlab (lab host only)",
+]
+testpaths = ["tests"]

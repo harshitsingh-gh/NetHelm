@@ -1,4 +1,4 @@
-# NetHelm
+# NetBrace
 
 Holistic benchmark for LLMs and AI agents on networking tasks.
 

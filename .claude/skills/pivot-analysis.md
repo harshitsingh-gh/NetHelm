@@ -1,6 +1,6 @@
 # /pivot-analysis — Evaluate Whether to Stay the Course or Pivot
 
-Given the current state of the research and the landscape, evaluate whether NetHELM is still the fastest path to a published paper, or whether a pivot would get there faster.
+Given the current state of the research and the landscape, evaluate whether NetBrace is still the fastest path to a published paper, or whether a pivot would get there faster.
 
 ## When to run this
 - After a lit-scan turns up a potential competitor
@@ -13,7 +13,7 @@ Given the current state of the research and the landscape, evaluate whether NetH
 Spawn TWO parallel sub-agents:
 
 ### Sub-agent A — "Stay the course" advocate
-Build the strongest case for continuing with NetHELM as-is. Address:
+Build the strongest case for continuing with NetBrace as-is. Address:
 - What has already been built and would be lost in a pivot?
 - What is the current estimated time to a submittable paper on the current path?
 - Does the safety/blast-radius angle still appear novel (check landscape table)?

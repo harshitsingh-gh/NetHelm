@@ -1,4 +1,4 @@
-# NetHELM Execution Plan — Week-by-Week (May 2026 → Submission)
+# NetBrace Execution Plan — Week-by-Week (May 2026 → Submission)
 
 > **Companion to:** [networking_llm_benchmark_paper_plan.md](networking_llm_benchmark_paper_plan.md) (strategy/scope) and [../test/stanford_math_refresher_summer_2026.md](../test/stanford_math_refresher_summer_2026.md) (parallel summer load).
 > **Author:** Harshit Singh.
@@ -10,16 +10,16 @@
 
 ## 0. Operating principles
 
-1. **Frontload everything build-shaped before Au'26 quarter starts.** Once CS221 is live, the only NetHELM work that's realistic is writing, revisions, and one model rerun per week. Build / debug / data-gen *must* be done by Sep 20.
-2. **Scope is locked to NetHELM v1** as defined in §7 of the strategy doc: import NetConfBench + Cornetto + NIKA + TeleQnA/NetEval, author the new Safety / blast-radius category (~300 tasks) + Behavior-prediction category (~500 templated), benchmark frontier models + `junos-mcp-server`. **No data-plane category, no fine-tuned model, no real-fleet data in v1.** If you find yourself adding scope mid-summer, stop and re-read this line.
+1. **Frontload everything build-shaped before Au'26 quarter starts.** Once CS221 is live, the only NetBrace work that's realistic is writing, revisions, and one model rerun per week. Build / debug / data-gen *must* be done by Sep 20.
+2. **Scope is locked to NetBrace v1** as defined in §7 of the strategy doc: import NetConfBench + Cornetto + NIKA + TeleQnA/NetEval, author the new Safety / blast-radius category (~300 tasks) + Behavior-prediction category (~500 templated), benchmark frontier models + `junos-mcp-server`. **No data-plane category, no fine-tuned model, no real-fleet data in v1.** If you find yourself adding scope mid-summer, stop and re-read this line.
 3. **The math refresher (Jun 1 – Aug 23, 10 hrs/wk) is non-negotiable.** Stanford admission > paper. If the two collide, the paper slips a week.
-4. **Cisco day job is the third lane.** Default budget = 40 hrs/wk Cisco + 10 hrs/wk math (summer) + 10–18 hrs/wk NetHELM. Total 60–68 hrs/wk for the summer. Sustainable for 16 weeks; not longer. Plan reflects that.
-5. **One deliverable per week, in a repo, with a commit.** No deliverable = the week didn't happen. Repo: `~/nethelm/`.
+4. **Cisco day job is the third lane.** Default budget = 40 hrs/wk Cisco + 10 hrs/wk math (summer) + 10–18 hrs/wk NetBrace. Total 60–68 hrs/wk for the summer. Sustainable for 16 weeks; not longer. Plan reflects that.
+5. **One deliverable per week, in a repo, with a commit.** No deliverable = the week didn't happen. Repo: `~/netbrace/`.
 6. **Data-release approval for Cisco DNM is a parallel track, started in Week 1 and re-pinged monthly.** If it lands, DNM goes in the leaderboard. If it doesn't, ship without it — the paper still stands.
 7. **Track everything in a single `progress.md` at the repo root.** One line per week: deliverable, hours spent, blocker (if any). This is also LOR / SOP / Cisco-promo material.
 
 ### Time budget by phase
-| Phase | Span | Weeks | NetHELM hrs/wk | Total NetHELM hrs | Concurrent load |
+| Phase | Span | Weeks | NetBrace hrs/wk | Total NetBrace hrs | Concurrent load |
 |---|---|---|---|---|---|
 | **0 — Pre-summer sprint** | May 19 – May 31 | 2 (partial wk 1) | 15–20 | ~35 | Cisco only |
 | **1 — Summer co-effort** | Jun 1 – Aug 23 | 12 | 10–12 | ~130 | Math refresher (10 hrs/wk) |
@@ -27,7 +27,7 @@
 | **3 — Au'26 quarter (ease-off)** | Sep 21 – Dec 13 | 12 | 4 | ~48 | CS221 (~15–20 hrs/wk) |
 | **4 — Wi'27 quarter** | Jan 4 – Mar 21, 2027 | 11 | 3 | ~33 | CS224N (~20–25 hrs/wk) |
 | **5 — Sp'27 quarter (submit)** | Mar 29 – Jun 13, 2027 | 11 | 4 | ~44 | CS229 (~25 hrs/wk) — **slip the paper, not CS229** |
-| **Total NetHELM** | — | — | — | **~370 hrs** | — |
+| **Total NetBrace** | — | — | — | **~370 hrs** | — |
 
 This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is intentional: the strategy doc was a floor; this plan funds the safety-axis novelty, model fleet, and one full rewrite.
 
@@ -36,13 +36,13 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 # PHASE 0 — Pre-summer sprint (May 19 – May 31, 2026)
 
 > **Goal:** finish all reading, stand up the lab, decide collaborator targets, *before* math refresher eats your weekends.
-> **Capacity:** ~15–20 hrs/wk NetHELM. Cisco is the only competing lane.
+> **Capacity:** ~15–20 hrs/wk NetBrace. Cisco is the only competing lane.
 
 ### Week 0 (Tue May 19 – Sun May 24) — Foundations & repo
 
 **Daily plan (weekdays = 1.5 hr eve, weekends = 5–6 hr blocks):**
 
-- **Tue May 19 (today, 2 hr):** create `~/nethelm/` repo (private GitHub or Bitbucket initially; flip public on submission day). Subfolders: `reading/`, `harness/`, `tasks/`, `runs/`, `paper/`, `progress.md`. Pull strategy doc + this plan into `paper/refs/` for fast lookup. Open data-release ticket with Cisco legal for DNM benchmarking (separate from any anonymized-fleet ask — those are different reviews per §6).
+- **Tue May 19 (today, 2 hr):** create `~/netbrace/` repo (private GitHub or Bitbucket initially; flip public on submission day). Subfolders: `reading/`, `harness/`, `tasks/`, `runs/`, `paper/`, `progress.md`. Pull strategy doc + this plan into `paper/refs/` for fast lookup. Open data-release ticket with Cisco legal for DNM benchmarking (separate from any anonymized-fleet ask — those are different reviews per §6).
 - **Wed May 20 (1.5 hr):** Tier 1 reading #1 — NetConfBench IETF draft end-to-end. Notes in `reading/01_netconfbench.md` (≤2 pages: scope, 40 tasks taxonomy, 3 metrics, ANI primitives, what's reusable, what's not).
 - **Thu May 21 (1.5 hr):** Skim `nobrowning/draft_llm_conf_benchmark` repo — README, top-level structure, what's runnable. Don't run yet. Notes go in same file.
 - **Fri May 22 (1.5 hr):** Tier 1 #2 — Cornetto paper end-to-end. Notes in `reading/02_cornetto.md`. Focus: their Batfish-based grader, the 231-problem taxonomy, the regression-at-scale finding.
@@ -68,7 +68,7 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 # PHASE 1 — Summer co-effort (Jun 1 – Aug 23, 2026)
 
 > **Goal:** by Aug 23, have a working harness that runs ≥2 imported benchmarks against ≥3 frontier models + 1 commercial agent, plus first 50 hand-authored Safety tasks.
-> **Capacity:** 10–12 hrs/wk NetHELM (Cisco 40 + math 10 + NetHELM 10–12 = ~62 hrs/wk, sustainable).
+> **Capacity:** 10–12 hrs/wk NetBrace (Cisco 40 + math 10 + NetBrace 10–12 = ~62 hrs/wk, sustainable).
 > **Recommended schedule:** Mon/Wed/Fri evenings 1.5 hr each (4.5 hr) + Sat morning 3 hr + Sun morning 3 hr = 10.5 hr/wk. Math gets Tue/Thu eve + Sat afternoon + Sun afternoon.
 > **Holiday handling:** Jul 4 (Sat) is a no-work day; absorb the lost 3 hr into Sun.
 
@@ -96,7 +96,7 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 - **Sat (3 hr):** Build `harness/runner.py` — given a `Task`, a `Model`, and an `Agent` (single-shot / ReAct / RAG), runs the loop, logs trace, returns `Run` object. Unit-test against one NetConfEval step-1 task.
 - **Sun (3 hr):** Build `harness/storage.py` — write each run to `runs/{benchmark}/{model}/{task_id}.json`. Idempotent re-runs. Cache hits.
 
-**Deliverable:** `python -m nethelm.run --benchmark netconfeval --model gpt-4o --task t1` works and writes a result file.
+**Deliverable:** `python -m netbrace.run --benchmark netconfeval --model gpt-4o --task t1` works and writes a result file.
 
 ### Week 5 (Jun 22 – Jun 28) — Harness: import NetConfEval fully (incl. step-3 low-level)
 
@@ -182,7 +182,7 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 # PHASE 2 — Final pre-quarter push (Aug 24 – Sep 20, 2026)
 
 > **Goal:** by Sep 20, have (a) full first draft of the paper, (b) all model runs locked, (c) collaborator outreach done.
-> **Capacity:** math refresher buffer week Aug 24–30 only, then math done. **NetHELM gets 18–22 hrs/wk for 4 weeks.** Cisco still 40 hrs.
+> **Capacity:** math refresher buffer week Aug 24–30 only, then math done. **NetBrace gets 18–22 hrs/wk for 4 weeks.** Cisco still 40 hrs.
 > **Recommended schedule:** weekdays 2 hr eve (10) + Sat 6 hr + Sun 6 hr = 22 hr/wk.
 
 ### Week 14 (Aug 24 – Aug 30) — Writing: §1 Intro, §2 Related Work, §3 Methodology
@@ -212,7 +212,7 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 ### Week 17 (Sep 14 – Sep 20) — Internal review, repo cleanup, "freeze v1"
 
 - **Mon–Fri (10 hr):** Self-review the draft top-to-bottom; mark every TODO / `[CITE]` / "verify this number." Fix what you can in 30 min each; ticket the rest in `paper/v1_review_tickets.md`.
-- **Sat (6 hr):** Repo cleanup — README, install instructions, `nethelm run --help` works, one example task ships green. Add `LICENSE` (Apache-2.0). Add `CITATION.cff`. Tag `v1.0-draft`.
+- **Sat (6 hr):** Repo cleanup — README, install instructions, `netbrace run --help` works, one example task ships green. Add `LICENSE` (Apache-2.0). Add `CITATION.cff`. Tag `v1.0-draft`.
 - **Sun (6 hr):** Hand the draft to 2 readers: (a) a senior Cisco engineer (technical accuracy on the network-engineering claims), (b) a friend in academia or industry who's written workshop papers (does the contribution claim land in 60 seconds?). Give them a 3-week window to return comments (back by ~Oct 11).
 
 **Deliverable:** **v1 frozen.** Draft sent to 2 reviewers. Repo presentable. CS221 starts in 24 hours — pivot mode.
@@ -221,12 +221,12 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 
 # PHASE 3 — Au'26 quarter (Sep 21 – Dec 13, 2026): ease-off
 
-> **Reality check:** CS221 problem sets eat weekends. NetHELM is now in **maintenance mode**: ~4 hrs/wk total, only on the lower-CS221-load weeks.
+> **Reality check:** CS221 problem sets eat weekends. NetBrace is now in **maintenance mode**: ~4 hrs/wk total, only on the lower-CS221-load weeks.
 > **Schedule:** Saturday morning, 3–4 hr block, weekly. **Skip the week of any CS221 midterm or major PS deadline.**
 
-| Week (academic) | Date span | NetHELM activity |
+| Week (academic) | Date span | NetBrace activity |
 |---|---|---|
-| Au wk 1 (Sep 21–27) | CS221 starts | **No NetHELM.** Settle into CS221 rhythm. |
+| Au wk 1 (Sep 21–27) | CS221 starts | **No NetBrace.** Settle into CS221 rhythm. |
 | Au wk 2 (Sep 28–Oct 4) | — | Process reviewer A comments (Cisco eng). |
 | Au wk 3 (Oct 5–11) | — | Process reviewer B comments (academia/industry). |
 | Au wk 4 (Oct 12–18) | CS221 PS likely | **Skip or 2 hr only.** Triage collaborator-outreach replies. |
@@ -246,14 +246,14 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 
 # PHASE 4 — Wi'27 quarter (Jan 4 – Mar 21, 2027): polish
 
-> **CS224N is heavier than CS221.** Final project = LOR-bait. **Do not let NetHELM eat CS224N project time.**
+> **CS224N is heavier than CS221.** Final project = LOR-bait. **Do not let NetBrace eat CS224N project time.**
 > **Schedule:** Saturday morning, 2–3 hr block. Weekly.
 
 | Week | Activity |
 |---|---|
 | Wi wks 1–4 (Jan 4–31) | Final v2 → v3 pass. Rerun model fleet with whatever's SOTA in Jan 2027 (Claude/Gemini/GPT will have moved). Update leaderboard. |
 | Wi wks 5–8 (Feb 1–28) | If venue is ICLR workshop: **submit early-Feb.** Polish appendix, reproducibility section, dataset card. arXiv preprint goes live submission day. Repo flips public. |
-| Wi wks 9–11 (Mar 1–21) | If submitted: rest from NetHELM. If venue is later (NAIC/HotNets/NeurIPS), continue light polish. |
+| Wi wks 9–11 (Mar 1–21) | If submitted: rest from NetBrace. If venue is later (NAIC/HotNets/NeurIPS), continue light polish. |
 
 **Phase 4 deliverable (best case):** workshop submission + arXiv preprint + public repo + Hugging Face dataset card.
 
@@ -273,19 +273,19 @@ This is ~2.5× the strategy doc's "150 hr workshop paper" estimate, which is int
 
 # Appendix A — Math-refresher coordination (Jun 1 – Aug 23)
 
-The math refresher (10 hrs/wk) and NetHELM summer (10–12 hrs/wk) share the same weekday eve / weekend block budget. **Lane discipline:**
+The math refresher (10 hrs/wk) and NetBrace summer (10–12 hrs/wk) share the same weekday eve / weekend block budget. **Lane discipline:**
 
-| Day | Math block | NetHELM block |
+| Day | Math block | NetBrace block |
 |---|---|---|
 | Mon | — | 1.5 hr eve |
 | Tue | 1.5 hr eve | — |
 | Wed | — | 1.5 hr eve |
 | Thu | 1.5 hr eve | — |
 | Fri | — | 1.5 hr eve |
-| Sat | Afternoon 2 hr (math deliverable) | Morning 3 hr (NetHELM week's main code) |
-| Sun | Afternoon 2 hr (math deliverable) | Morning 3 hr (NetHELM week's writing/grader) |
+| Sat | Afternoon 2 hr (math deliverable) | Morning 3 hr (NetBrace week's main code) |
+| Sun | Afternoon 2 hr (math deliverable) | Morning 3 hr (NetBrace week's writing/grader) |
 
-**Hard rule: do not let NetHELM eat a math deliverable, ever.** A missed math week compounds badly (each week builds on the prior); a missed NetHELM week is recoverable. If a week breaks, drop NetHELM scope (one fewer model in this week's sweep, one fewer task batch) — never math.
+**Hard rule: do not let NetBrace eat a math deliverable, ever.** A missed math week compounds badly (each week builds on the prior); a missed NetBrace week is recoverable. If a week breaks, drop NetBrace scope (one fewer model in this week's sweep, one fewer task batch) — never math.
 
 ---
 
@@ -297,7 +297,7 @@ Track these in `progress.md` and revisit each week.
 2. **(Week 9, Jul 26):** if safety-axis GPT-4o F1 lands >85% or <10% after task-difficulty tuning, the axis is broken — **rescope the safety category or replace with a different novelty axis** (most likely fallback: reasoning-trace step-level grading per strategy §2.2 #7).
 3. **(Week 13, Aug 23):** if no headline finding has emerged from the v0 leaderboard, the comparative thesis is at risk — **shift framing** to a measurement paper around safety alone ("frontier LLMs cannot predict blast-radius of network changes"), which is still publishable as a HotNets short paper.
 4. **(Week 16, Sep 13):** if zero collaborator-outreach responses, **escalate via shared contacts**, not by sending more cold emails.
-5. **(End of Au'26 quarter):** if CS221 grade is at risk (any homework <A-), **suspend NetHELM entirely for Wi'27** and accept HotNets June'27 as the submission target.
+5. **(End of Au'26 quarter):** if CS221 grade is at risk (any homework <A-), **suspend NetBrace entirely for Wi'27** and accept HotNets June'27 as the submission target.
 6. **(Sp'27, anytime):** if CS229 grade is at risk, **slip the paper one cycle.** No exceptions. The transcript line is worth more to Stanford admission than any one workshop paper.
 
 ---
@@ -318,7 +318,7 @@ Track these in `progress.md` and revisit each week.
 
 Checklist for the Phase 2 freeze:
 
-- [ ] Repo `~/nethelm/` has a working `nethelm run` CLI.
+- [ ] Repo `~/netbrace/` has a working `netbrace run` CLI.
 - [ ] ≥5 cloud models + ≥2 local models scored across ≥4 categories.
 - [ ] Safety axis: ~300 tasks, hand-validated, GPT-4o F1 in 30–60% range.
 - [ ] Behavior axis: ~500 tasks, smoke-run done.

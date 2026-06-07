@@ -1,6 +1,6 @@
 # /paper-draft — Write + Auto-Critique a Paper Section
 
-Write a section of the NetHELM paper, then immediately run /critique on it. This ensures no draft section reaches storage without a peer-review pass.
+Write a section of the NetBrace paper, then immediately run /critique on it. This ensures no draft section reaches storage without a peer-review pass.
 
 ## What you receive
 A section identifier and any notes or bullet points. Examples:

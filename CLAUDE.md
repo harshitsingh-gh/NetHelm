@@ -1,20 +1,20 @@
-# NetHELM — Claude Code Context
+# NetBrace — Claude Code Context
 
 ## The real objective
 
 **Publish a quality paper** at a respected ML or networking venue (NeurIPS/ICLR/ICML workshop, HotNets, NAIC@SIGCOMM, or equivalent). The paper is a credential, not an end in itself. It needs to be co-authored with an academic where possible — that is 10× more valuable than solo authorship for the intended downstream purpose.
 
-**We are not married to NetHELM.** NetHELM is the current best vehicle. If a faster, cleaner, or more novel angle emerges — from the literature, from a collaborator, from a course project — we pivot. Velocity and quality are both paramount. Many papers are published daily; staying current on the landscape is an active responsibility.
+**We are not married to NetBrace.** NetBrace is the current best vehicle. If a faster, cleaner, or more novel angle emerges — from the literature, from a collaborator, from a course project — we pivot. Velocity and quality are both paramount. Many papers are published daily; staying current on the landscape is an active responsibility.
 
 **Hard deadline**: A submission must be in by **mid-2027** at the latest (targeting first available workshop cycle). Everything before that is build time.
 
 ---
 
-## What NetHELM is (the current vehicle)
+## What NetBrace is (the current vehicle)
 
-**NetHELM** evaluates LLMs and AI agents on network-engineering tasks. The HELM-style comparative framing imports existing benchmarks (NetConfEval, Cornetto, NIKA, TeleQnA/NetEval) into a unified harness, and introduces a novel **safety / blast-radius** axis: given a proposed config diff, score precision/recall vs. the set of BGP sessions, prefixes, interfaces, and services Batfish predicts will be lost.
+**NetBrace** evaluates LLMs and AI agents on network-engineering tasks. The HELM-style comparative framing imports existing benchmarks (NetConfEval, Cornetto, NIKA, TeleQnA/NetEval) into a unified harness, and introduces a novel **safety / blast-radius** axis: given a proposed config diff, score precision/recall vs. the set of BGP sessions, prefixes, interfaces, and services Batfish predicts will be lost.
 
-Thesis: *"NetHELM: holistic comparative evaluation of LLMs and commercial network agents on network-engineering tasks, with a safety/blast-radius axis no prior benchmark scores."*
+Thesis: *"NetBrace: holistic comparative evaluation of LLMs and commercial network agents on network-engineering tasks, with a safety/blast-radius axis no prior benchmark scores."*
 
 **Why it still makes sense as the vehicle:**
 - Safety/blast-radius angle has no direct competitor yet (as of last check — verify with `/lit-scan`)
@@ -34,8 +34,8 @@ Thesis: *"NetHELM: holistic comparative evaluation of LLMs and commercial networ
 
 | Option | Velocity | Novelty | LOR/collab potential | Notes |
 |---|---|---|---|---|
-| **NetHELM safety-axis only** (strip the harness; just blast-radius + GPT-4o baseline) | Fast (2–3 mo) | High | Medium | Smallest possible paper that still has novelty. HotNets target. |
-| **NetHELM full v1** | Slow (6–9 mo) | Medium (comparative framing) | High (imports others' work) | Original plan. Worth it if collab lands. |
+| **NetBrace safety-axis only** (strip the harness; just blast-radius + GPT-4o baseline) | Fast (2–3 mo) | High | Medium | Smallest possible paper that still has novelty. HotNets target. |
+| **NetBrace full v1** | Slow (6–9 mo) | Medium (comparative framing) | High (imports others' work) | Original plan. Worth it if collab lands. |
 | **CS224N/CS229 final project → paper** | Medium (starts Wi'27) | Variable | Very high (Stanford co-author path) | Best for LOR. But 8+ months away. |
 | **Measurement paper: "LLMs fail at network change safety"** | Fast (2–3 mo) | High if first | Low | arXiv first, then extend. No harness needed, just Batfish + GPT-4o. |
 | **OSS project → blog → citation target** | Very fast | None | None | Builds visibility, not a paper substitute |
@@ -46,7 +46,7 @@ Thesis: *"NetHELM: holistic comparative evaluation of LLMs and commercial networ
 
 **Phase**: 1 — Summer co-effort (Jun 1 – Aug 23, 2026)  
 **Current week**: Week 2 (Jun 1–7) — Reproduce NetConfEval  
-**Hard constraint**: Math refresher (10 hrs/wk) runs in parallel Jun–Aug; this is non-negotiable. NetHELM gets the other 10–12 hrs/wk.
+**Hard constraint**: Math refresher (10 hrs/wk) runs in parallel Jun–Aug; this is non-negotiable. NetBrace gets the other 10–12 hrs/wk.
 
 **Sep 20, 2026** is the last day for all build/experiment work before CS221 starts and eating into velocity.
 
@@ -70,21 +70,21 @@ Course path: CS221 (Au'26) → CS224N (Wi'27) → CS229 (Sp'27) → CS238/CS336 
 
 Academic LOR path: CS224N or CS229 final project → build relationship with instructor/head TA → ask for LOR after grades post.
 
-The paper co-authorship and the LOR are the same goal — find a Stanford-adjacent academic during CS224N/CS229, do excellent final project work that intersects their research, build from there. **NetHELM importing a prior benchmark (Cornetto, NIKA) is the cold-email opener — "I already ran your benchmark inside my harness."**
+The paper co-authorship and the LOR are the same goal — find a Stanford-adjacent academic during CS224N/CS229, do excellent final project work that intersects their research, build from there. **NetBrace importing a prior benchmark (Cornetto, NIKA) is the cold-email opener — "I already ran your benchmark inside my harness."**
 
 ---
 
 ## Repository layout
 
 ```
-NetHelm/
+NetBrace/
 ├── CLAUDE.md                       ← this file
 ├── README.md
 ├── progress.md                     ← weekly log (update weekly — this is also LOR/SOP material)
 ├── paper/
 │   ├── refs/
 │   │   ├── networking_llm_benchmark_paper_plan.md  ← landscape + strategy
-│   │   ├── nethelm_execution_plan.md               ← week-by-week plan
+│   │   ├── netbrace_execution_plan.md               ← week-by-week plan
 │   │   └── landscape_table.md                      ← related work table
 ├── reading/                        ← paper reading notes
 ├── harness/
@@ -104,7 +104,7 @@ NetHelm/
 
 ---
 
-## Task taxonomy (NetHELM v1 — current scope)
+## Task taxonomy (NetBrace v1 — current scope)
 
 | Category | Label | Source | Grader | Status |
 |---|---|---|---|---|
@@ -126,7 +126,7 @@ NetHelm/
 **Installed and verified:**
 - Docker 29.5.2, Containerlab 0.75.0
 - FRR-square iBGP: `harness/lab/frr_square.clab.yml`
-- Batfish `batfish/allinone:nethelm` — ports 9996/9997
+- Batfish `batfish/allinone:netbrace` — ports 9996/9997
 - pybatfish venv: `harness/venvs/batfish/`
 - NetConfEval: `external/netconfeval/`, venv at `harness/venvs/netconfeval/`
 
@@ -141,7 +141,7 @@ NetHelm/
 | Cornetto (ETH NSG) | Check GitHub by Jun 8 | Config-repair grader (Wk 3); cold-email opener |
 | NIKA | arXiv:2512.16381 | Troubleshooting import; cold-email opener |
 | NetPress | arXiv:2506.03231 | Prior art for safety axis |
-| Batfish | docker `batfish/allinone:nethelm` | Core grading oracle |
+| Batfish | docker `batfish/allinone:netbrace` | Core grading oracle |
 | junos-mcp-server | GitHub: Juniper/junos-mcp-server | Commercial-agent baseline |
 | TeleQnA | HF: netop-team/TeleQnA | MCQ import |
 | NetEval | HF: NASP/neteval-exam | MCQ import |

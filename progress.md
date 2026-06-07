@@ -1,4 +1,4 @@
-# NetHELM Progress
+# NetBrace Progress
 
 ## Day 1 — 2026-05-20
 

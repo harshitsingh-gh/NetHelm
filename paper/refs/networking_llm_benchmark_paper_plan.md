@@ -79,7 +79,7 @@ These are products, not academic benchmarks, but a credible holistic eval has to
 7. **Reasoning-trace evaluation beyond cosine similarity.** NetConfBench's `S_reasoning` is embedding cosine against a ground-truth narrative — coarse. SWE-bench / τ-bench-style step-level trajectory grading ("did the agent run `show bgp summary` before `clear bgp`?") is still open.
 
 ### 2.3 Recommended thesis (revised)
-*"**NetHELM**: a holistic, comparative evaluation of LLMs and commercial network agents on network-engineering tasks, unifying NetConfBench, Cornetto, and NetPress under a normalized scoring framework, and introducing a **safety / blast-radius** axis no prior benchmark scores."*
+*"**NetBrace**: a holistic, comparative evaluation of LLMs and commercial network agents on network-engineering tasks, unifying NetConfBench, Cornetto, and NetPress under a normalized scoring framework, and introducing a **safety / blast-radius** axis no prior benchmark scores."*
 
 This pivot is deliberate. The original "build a brand-new execution-grounded benchmark" thesis is no longer defensible — NetConfBench shipped first. The HELM-style comparative thesis is:
 - **Faster to ship** (reuse existing task corpora; the work is the harness + scoring + safety axis).
@@ -117,7 +117,7 @@ Key choices:
 - **Agent harness:** copy NetPress's state/action abstraction; allow tool use (`run_cli`, `read_file`, `apply_config`, `wait`, `done`).
 - **Metrics:** correctness (gold-config diff or behavioral equivalence on Batfish), safety (did the agent issue an outage-causing command on prod-tagged devices?), efficiency (steps, tokens), grounding (did its reasoning cite real `show` output?).
 
-### 3.2 Task taxonomy under the NetHELM framing
+### 3.2 Task taxonomy under the NetBrace framing
 With the pivot in §2.3, most categories below are **sourced from existing benchmarks** rather than newly authored. Only **S** is new and is the paper's primary novelty axis.
 
 - **K — Knowledge** (MCQ): re-use TeleQnA + NetEval. No new authoring.
@@ -208,7 +208,7 @@ A networking-LLM benchmark sits at the intersection of two communities that read
 - "Wrong venue" → if going to NeurIPS D&B, frame as a benchmark for *agent evaluation*, not as a "networking paper." If going to HotNets, frame as a *networking systems* contribution that uses LLMs as a tool.
 
 ### Authorship & support
-- **Academic co-author:** a professor whose group works in **holistic LLM evaluation** or in **networking-systems + ML**. Strongest cold-email targets given the NetHELM framing: groups that have published HELM-family work or large-scale LLM-eval methodology, plus Vanbever (ETH NSG, authors of Cornetto), Cui (Tsinghua, authors of NetConfBench). KTH SEMLA, Princeton, CMU CyLab, UMD, Microsoft Research Networking remain plausible. A cold email with a working prototype that already runs *their* benchmark inside the harness is the highest-leverage opening move. **Aim to land this collaboration during the Q1–Q2 2027 build phase, not the week before submission.**
+- **Academic co-author:** a professor whose group works in **holistic LLM evaluation** or in **networking-systems + ML**. Strongest cold-email targets given the NetBrace framing: groups that have published HELM-family work or large-scale LLM-eval methodology, plus Vanbever (ETH NSG, authors of Cornetto), Cui (Tsinghua, authors of NetConfBench). KTH SEMLA, Princeton, CMU CyLab, UMD, Microsoft Research Networking remain plausible. A cold email with a working prototype that already runs *their* benchmark inside the harness is the highest-leverage opening move. **Aim to land this collaboration during the Q1–Q2 2027 build phase, not the week before submission.**
 - **Industry co-author:** someone senior on your side — adds legitimacy, helps with data-release approval for benchmarking the Cisco Deep Network Model, may unlock compute. Should not be your direct manager unless the manager has the technical depth to defend the work in review.
 - **Legal / IP:** loop in the data-release reviewers early. Two distinct approvals are needed: (1) anonymization spec for any real-fleet `show`/config data (deterministic IP/ASN/serial remap), approved *before* the dataset is generated; (2) approval to publish comparative numbers on Cisco Deep Network Model (and any internal-only system) — start this conversation in Q3 2026, not Q2 2027.
 
@@ -219,7 +219,7 @@ A networking-LLM benchmark sits at the intersection of two communities that read
 ### Feasibility check (read this before committing)
 A *full* execution-grounded benchmark across 4 protocols × 3 vendors × 6 task types is a 600+ hour project and a CoNEXT/NeurIPS-D&B-class paper. That scope **does not fit** an 18-month part-time effort alongside a normal day job. The plan below scopes down deliberately so a workshop paper is achievable in ~150 hours spread over 12 months (~3 hrs/week), with the option to extend into a full paper later.
 
-**In-scope for the first paper (workshop version) — NetHELM v1:**
+**In-scope for the first paper (workshop version) — NetBrace v1:**
 - **Reuse, don't re-author**: import NetConfBench (40 tasks), Cornetto (231 problems), NIKA troubleshooting subset, plus TeleQnA/NetEval MCQ subsets, into a single normalized harness.
 - **New authoring (the novelty):** ~300 safety/blast-radius tasks (category **S**) generated from Batfish-derived ground truth. ~500 templated behavior-prediction tasks (category **B**).
 - **Vendors:** FRR (no licenses) + Arista cEOS-lab as the primary pair. NetConfBench/Cornetto already give multi-vendor coverage at the IR level via Batfish.
@@ -228,7 +228,7 @@ A *full* execution-grounded benchmark across 4 protocols × 3 vendors × 6 task 
 
 **Out of scope until v2 / extension paper:** real anonymized-fleet `show`/config data; data-plane / packet-level reasoning category; reasoning-trace step-level grading; fine-tuned model; protocol expansion beyond what the imported benchmarks cover.
 
-### 12-month plan (Q3 2026 → Q3 2027) — NetHELM v1
+### 12-month plan (Q3 2026 → Q3 2027) — NetBrace v1
 - **Q3 2026 (Months 1–3 — foundation & reproduction):**
   - Read NetConfBench (IETF draft), Cornetto, NetPress, NIKA, NetConfEval, TeleQnA, NetEval, plus the two surveys (arXiv 2404.12901, 2507.21504) cover-to-cover.
   - **Reproduce NetConfBench end-to-end** from `nobrowning/draft_llm_conf_benchmark`. Reproduce Cornetto if code is released; otherwise stand up an equivalent Batfish-based grader.
@@ -252,7 +252,7 @@ A *full* execution-grounded benchmark across 4 protocols × 3 vendors × 6 task 
   - Submit to chosen workshop / D&B track. Notification ~Aug–Sept 2027.
 
 ### Risk register
-- **Data-release approval blocked for Cisco DNM:** ship NetHELM v1 with `junos-mcp-server` + frontier LLMs only. Add Cisco DNM in v2.
+- **Data-release approval blocked for Cisco DNM:** ship NetBrace v1 with `junos-mcp-server` + frontier LLMs only. Add Cisco DNM in v2.
 - **A competing holistic-eval paper ships first** (likely — this space is moving): differentiate on (a) the safety/blast-radius axis (no incumbent has it), (b) commercial-agent baselines (no academic group has access), (c) the specific normalization decisions documented in the methodology section.
 - **NetConfBench / Cornetto authors release their own comparative paper:** likely outcome is a co-citation, not a kill — but mitigates by getting the arXiv preprint up early (Q4 2026 if possible) and by reaching out to those authors as co-authors during Q4 2026 outreach, not as competitors.
 - **Day-job crunch eats Q1 2027:** push submission to the next workshop cycle (most run twice a year). Do *not* ship a half-baked paper to hit a deadline — a rejected paper is worse than a delayed one.
@@ -302,7 +302,7 @@ Most of this **can** be open-sourced by anyone. The Cisco-specific advantage is 
 - Benchmark every **public** model: GPT, Claude, Gemini, Llama, Qwen.
 - Publish the leaderboard, write the paper, get the citations.
 
-A grad student with a workstation and API credits can do ~90% of NetHELM. That's the uncomfortable truth.
+A grad student with a workstation and API credits can do ~90% of NetBrace. That's the uncomfortable truth.
 
 ## What Cisco actually gives you
 
