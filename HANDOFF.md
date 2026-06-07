@@ -170,4 +170,3 @@ format (mirror `evals/inspect_safety.py` + `scorers.py`).
 - `paper/refs/blast_radius_scenario_catalog.md` — 20 scenarios + oracle ledger.
 - `docs/project_guide.md` — v0 architecture. `docs/batfish_oracle_runbook.md` —
   Batfish setup. `plan.md` — original design + open questions.
-</content>
