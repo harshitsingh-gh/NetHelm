@@ -23,6 +23,7 @@ from netbrace.batfish.oracle import _materialize_snapshot
 from netbrace.core.dimensions import (
     ExtendedBlastRadius,
     ForwardingAnomaly,
+    RedundancyLoss,
     WaypointViolation,
 )
 
@@ -127,6 +128,40 @@ class ExtendedOracle:
                     )
 
         return ExtendedBlastRadius(forwarding_anomalies=anomalies).normalized()
+
+    def _nexthop_count(self, snapshot: str, node: str, prefix: str) -> int:
+        """Number of distinct installed next-hops for (node, prefix) — the ECMP width."""
+        df = self.bf.q.routes(nodes=node, network=prefix).answer(snapshot=snapshot).frame()
+        return len({str(row["Next_Hop_IP"]) for _, row in df.iterrows()})
+
+    def compute_redundancy(
+        self,
+        pre_configs: dict[str, str],
+        post_configs: dict[str, str],
+        targets: list[tuple[str, str]],
+    ) -> ExtendedBlastRadius:
+        """Return an ExtendedBlastRadius whose redundancy_losses is the D5 truth.
+
+        ``targets`` is a list of (node, dst_prefix). A RedundancyLoss is emitted
+        when the installed next-hop count drops but stays >= 1 (i.e. resilience is
+        cut while the prefix remains reachable — invisible to D1-D3).
+        """
+        with tempfile.TemporaryDirectory(prefix="netbrace_ext_") as tmp:
+            tmp = Path(tmp)
+            self._init(_materialize_snapshot(pre_configs, tmp / "pre"), "pre")
+            self._init(_materialize_snapshot(post_configs, tmp / "post"), "post")
+
+            losses: list[RedundancyLoss] = []
+            for node, prefix in targets:
+                before = self._nexthop_count("pre", node, prefix)
+                after = self._nexthop_count("post", node, prefix)
+                if before > after >= 1:
+                    losses.append(RedundancyLoss(
+                        node=node, dst_prefix=prefix,
+                        before_paths=before, after_paths=after,
+                    ))
+
+        return ExtendedBlastRadius(redundancy_losses=losses).normalized()
 
     def compute_waypoint(
         self,
