@@ -35,25 +35,25 @@ Fine-grained sub-intents (per device) each correspond to a testcase.
 S_testcase is the testcase pass rate, defined as the proportion of passed testcases among all defined testcases.
 
 
-## What NetHELM should reuse
+## What NetBrace should reuse
 - Task Assignment
 - ANI
 - Task Evaluation interface
 
-## What NetHELM should not copy
+## What NetBrace should not copy
 - Since we have access to real cisco routers, we will use real routers for that part.
 -
 
-## How NetHELM differentiates
+## How NetBrace differentiates
 For now — to be revised after reading up on Cornetto, NetPress, NIKA, and HELM.
 
-1. **Holistic comparison across benchmarks.** Instead of creating another standalone benchmark, NetHELM imports existing benchmarks such as NetConfBench, Cornetto, NIKA, TeleQnA/NetEval, and possibly NetPress-style tasks into one normalized harness. The contribution is the shared scoring surface: same model fleet, same runner, comparable metrics.
+1. **Holistic comparison across benchmarks.** Instead of creating another standalone benchmark, NetBrace imports existing benchmarks such as NetConfBench, Cornetto, NIKA, TeleQnA/NetEval, and possibly NetPress-style tasks into one normalized harness. The contribution is the shared scoring surface: same model fleet, same runner, comparable metrics.
 
-2. **Safety / blast-radius axis.** NetHELM adds a new task category: given a proposed network change, predict what BGP sessions, prefixes, interfaces, or services will be lost or degraded. This is not the main focus of NetConfBench. Ground truth can be computed with Batfish, making the category automatically gradeable.
+2. **Safety / blast-radius axis.** NetBrace adds a new task category: given a proposed network change, predict what BGP sessions, prefixes, interfaces, or services will be lost or degraded. This is not the main focus of NetConfBench. Ground truth can be computed with Batfish, making the category automatically gradeable.
 
-3. **Commercial network-agent baselines.** If access and approval land, NetHELM can include commercial or vendor-specific agents such as Cisco DNM or Juniper `junos-mcp-server`. However, this is not guaranteed and is 100% reliant on how much motion I have in Cisco to get this baby going.
+3. **Commercial network-agent baselines.** If access and approval land, NetBrace can include commercial or vendor-specific agents such as Cisco DNM or Juniper `junos-mcp-server`. However, this is not guaranteed and is 100% reliant on how much motion I have in Cisco to get this baby going.
 
-TLDR: NetConfBench asks, “Can an LLM solve these network-configuration tasks?” NetHELM asks, “How do LLMs and network agents compare across the existing task landscape, and can they predict the blast radius of changes?”
+TLDR: NetConfBench asks, “Can an LLM solve these network-configuration tasks?” NetBrace asks, “How do LLMs and network agents compare across the existing task landscape, and can they predict the blast radius of changes?”
 
 ## Reproduction questions
 

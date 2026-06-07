@@ -1,1 +1,7 @@
 harness/venvs/**
+__pycache__/
+*.pyc
+*.egg-info/
+runs/
+paper/figures/
+temporary/

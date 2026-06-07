@@ -8,20 +8,20 @@ topology:
   nodes:
     r1:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r1/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r1/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r1/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r1/frr.conf:/etc/frr/frr.conf
     r2:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r2/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r2/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r2/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r2/frr.conf:/etc/frr/frr.conf
     r3:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r3/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r3/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r3/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r3/frr.conf:/etc/frr/frr.conf
     r4:
       binds:
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r4/daemons:/etc/frr/daemons
-        - /home/harshitsingh/projects/NetHelm/harness/lab/frr_square/configs/r4/frr.conf:/etc/frr/frr.conf
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r4/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetBrace/harness/lab/frr_square/configs/r4/frr.conf:/etc/frr/frr.conf
 
   links:
     - endpoints: ["r1:eth1", "r2:eth1"]

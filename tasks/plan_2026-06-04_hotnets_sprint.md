@@ -17,7 +17,7 @@
 **Contribution claim (3 bullets):**
 1. We formalize the **network change blast-radius prediction** task: given a proposed config diff, enumerate the set {sessions, prefixes, interfaces, services} that Batfish predicts will be lost or degraded.
 2. We introduce a small evaluation set (preliminary: ~20–50 hand-crafted tasks) with automatically gradeable ground truth from Batfish.
-3. We show that GPT-4o (single-shot) performs poorly on this task (target: F1 ~30–60%), establishing a baseline and motivating the full NetHELM safety category.
+3. We show that GPT-4o (single-shot) performs poorly on this task (target: F1 ~30–60%), establishing a baseline and motivating the full NetBrace safety category.
 
 **Why HotNets:** This is a 6-page position paper. We don't need the full 300-task set or the complete model fleet. We need a clear framing + a real preliminary result + a compelling argument for why this matters to the networking community.
 
@@ -84,7 +84,7 @@
   - §2 Background: network change management today, LLMs entering the loop, what "blast radius" means in this context, why existing benchmarks don't measure this
   - §3 Evaluation Framework: task formalization, Batfish oracle, grader, dataset statistics
   - §4 Preliminary Results: F1 scores, failure mode analysis (which kinds of changes do models get wrong?)
-  - §5 Discussion + Future Work: how this extends to the full NetHELM safety category, invitation for the community to build on this
+  - §5 Discussion + Future Work: how this extends to the full NetBrace safety category, invitation for the community to build on this
 
 **Deliverable:** Full draft v0 of the 6-page paper. Run `/critique` on it.
 

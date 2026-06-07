@@ -1,493 +1,377 @@
-# NetHELM Safety Axis — Technical Plan (HotNets 2026)
+# NetBrace Safety Axis — Technical Plan (HotNets 2026)
 
-> **Status:** Design — v1
+> **Status:** Design — v2 (merged authoritative plan)
 > **Created:** 2026-06-06
-> **Scope:** The blast-radius prediction task only. This is the technical design behind the [HotNets sprint plan](tasks/plan_2026-06-04_hotnets_sprint.md). Strategy/velocity rationale lives there and in [temporary/plan_comparison.md](temporary/plan_comparison.md); this document is the *how it works*.
-> **Paper:** "Can LLMs Predict the Blast-Radius of Network Configuration Changes? A Preliminary Evaluation"
+> **Supersedes:** the v1 of this file and `tasks/plan_2026-06-06_hotnets_implementation_blueprint.md`. Rationale for the merge is in [temporary/plan_analysis_earlier_vs_blueprint.md](temporary/plan_analysis_earlier_vs_blueprint.md).
+> **Companion (strategy/calendar):** [tasks/plan_2026-06-04_hotnets_sprint.md](tasks/plan_2026-06-04_hotnets_sprint.md)
+> **Paper:** "Can LLMs Predict the Blast-Radius of Network Configuration Changes? A Preliminary Evaluation" — HotNets 2026, submit July 15.
+
+This document is the single source of truth for *how the system works*. It takes the **scope, oracle design, and evaluation science** from the earlier `plan.md`, and the **reproducibility spine, test suite, and data-model rigor** from the implementation blueprint. Where the two disagreed, the resolved decisions are marked **[DECISION]**.
 
 ---
 
-## 0. The thesis in one sentence
+## 0. Thesis in one sentence
 
-Given a converged network and a proposed configuration change, can an LLM predict **which BGP sessions, prefixes, and reachability** the change will break — *before* it is applied? We build a pipeline that (a) generates such change scenarios, (b) computes the true impact with Batfish, (c) asks an LLM to predict the impact, and (d) scores the prediction with precision/recall/F1. No prior benchmark scores this.
+Given a converged network and a proposed configuration change, can an LLM predict **which BGP sessions, prefixes, and reachability** the change will break — *before* it is applied? We generate such scenarios, compute the true impact with Batfish, ask an LLM to predict it, and score the prediction with precision/recall/F1. No prior benchmark scores this.
 
 ---
 
-## 1. What we are building (and not building)
+## 1. Scope
 
-### In scope
-- A **task generator** that emits `(topology, baseline config set, proposed diff)` scenarios.
-- A **ground-truth oracle**: Batfish in differential mode computes the exact blast-radius of each diff.
-- An **LLM evaluation harness** built on **Inspect AI** (no custom runner/storage).
-- A **scorer**: set-comparison precision/recall/F1 over the predicted vs. true blast-radius.
-- A **results store**: Inspect AI's native `.eval` logs + a flattened CSV for the paper figure.
-- 20–50 tasks, 2 models (GPT-4o, Claude Sonnet), single-shot.
+### In scope (what ships for HotNets)
+- A **deterministic task generator**: `(topology, baseline configs, proposed diff)` → task JSON.
+- A **Batfish ground-truth oracle** in differential mode, denoised by a watched-prefix set.
+- An **LLM eval harness built on Inspect AI** — Inspect runs the models; we write the networking task + scorer.
+- A **set-comparison grader**: precision/recall/F1 over predicted vs. true blast-radius, with trap/false-alarm handling.
+- A **reproducibility spine**: Pydantic schemas, manifest + prompt hashing, git capture, cost logging.
+- A **fake/replay model path** so the whole pipeline is developed and tested without API spend.
+- 20 tasks (Week A) → 50 tasks (Week C); GPT-4o + Claude Sonnet; single-shot.
 
-### Explicitly NOT in scope (deferred to NeurIPS extension)
-- Live containerlab in the grading loop — **Batfish static analysis is the oracle**; containers are used only to *validate the oracle* on a 5-task sample.
-- Multi-vendor (FRR only for v1).
-- The other 5 task categories (K/C/B/D/R).
-- Custom harness code, model adapters, storage layer — Inspect AI provides all of it.
-- Agentic/multi-turn — single-shot prediction only.
+### Out of scope **[DECISION]** (deferred to the NeurIPS extension)
+- **Router write/apply/rollback backend** — not on the `tasks → oracle → model → score → figure` path. Only *read-only* `show` helpers ship, for 5-task oracle validation.
+- **A custom model runner** — Inspect AI provides the run loop, provider adapters, logging, and cost capture. We do not reimplement them.
+- Multi-vendor (FRR only), the other 5 task categories (K/C/B/D/R), agentic/multi-turn, local models, Cisco DNM, a database.
+
+> **Anti-goal:** building a platform instead of a paper. Every file must serve the five-stage pipeline. If it doesn't, it waits until after July 15.
 
 ---
 
 ## 2. The task, formally
 
-A **task** is a tuple `T = (N, C₀, Δ)` where:
+A **task** is `T = (N, C₀, Δ)`:
+- `N` — **topology**: nodes, links, addressing, AS layout.
+- `C₀` — **baseline config set**, one per node, in a *converged* state (all intended BGP sessions ESTABLISHED, all intended prefixes reachable).
+- `Δ` — **proposed diff**: a single localized change to one node (shut a neighbor, add a filter, …).
 
-- `N` — a **topology**: nodes, links, addressing, AS layout.
-- `C₀` — the **baseline configuration set**: one config per node, in a *converged* state (all intended BGP sessions ESTABLISHED, all intended prefixes reachable). This is the "before."
-- `Δ` — a **proposed diff**: a single, localized configuration change to one node (e.g., shut a neighbor, add a prefix filter).
-
-The **ground-truth blast-radius** `G` is the set of network elements that degrade when `Δ` is applied:
+The **ground-truth blast-radius** `G` is the set of elements that degrade when `Δ` is applied:
 
 ```
 G = {
-  sessions_lost      : set of (node, peer) BGP sessions that go ESTABLISHED → not,
-  prefixes_lost      : set of (node, prefix) entries removed from a node's RIB,
-  reachability_lost  : set of (src, dst) loopback pairs that become unreachable
+  sessions_lost  : BGP sessions that go ESTABLISHED → not,
+  prefixes_lost  : (node, prefix) entries removed from a node's RIB (watched prefixes only),
+  reachability_lost : (src, dst) loopback pairs that become unreachable
 }
 ```
 
-The **model's job**: given a natural-language + structured description of `N`, `C₀`, and `Δ`, output its predicted `G_pred`. The model never sees Batfish.
+The **model's job**: given `N`, `C₀`, `Δ`, output predicted `G_pred`. The model never sees Batfish.
+The **score**: precision/recall/F1 of `G_pred` vs `G`, per element-type and aggregated.
 
-The **score**: precision, recall, F1 of `G_pred` against `G`, computed per element-type and aggregated.
-
-> **Key design decision:** the diff is *given*; the model predicts *consequences*. This is the cleanest framing of "predict the blast radius" and is directly, automatically gradeable. (The inverse task — model generates a config, we score its safety — is config-synthesis safety, deferred to v2.)
+> **[DECISION] The diff is given; the model predicts consequences.** Cleanest framing of "predict the blast radius," directly gradeable. The inverse (model writes a config, we score its safety) is a different task, deferred to v2.
 
 ---
 
-## 3. System architecture
+## 3. Architecture — the model-free / eval seam
 
 ```
-                         ┌──────────────────────────────────────────────┐
-                         │            TASK GENERATOR                     │
-                         │  generate_v0.py                               │
-                         │                                               │
-   topology specs ──────▶│  1. render baseline configs (Jinja → FRR)    │
-   intent templates ────▶│  2. apply Δ → mutated configs                │
-                         │  3. emit task JSON (N, C₀, Δ) + raw configs   │
-                         └───────────────────┬──────────────────────────┘
-                                             │  pre/ and post/ config dirs
-                                             ▼
-                         ┌──────────────────────────────────────────────┐
-                         │         GROUND-TRUTH ORACLE                    │
-                         │  oracle.py  (pybatfish)                        │
-                         │                                               │
-                         │  init_snapshot(pre)  → S0                      │
-                         │  init_snapshot(post) → S1                      │
-                         │  bgpSessionStatus(S1, ref=S0)  → Δ sessions    │
-                         │  routes(S1, ref=S0)            → Δ prefixes    │
-                         │  reachability diff             → Δ services    │
-                         │                                               │
-                         │  → writes ground_truth: G into task JSON       │
-                         └───────────────────┬──────────────────────────┘
-                                             │  tasks/safety/v0/{id}.json (complete)
-                                             ▼
-                         ┌──────────────────────────────────────────────┐
-                         │        LLM EVAL HARNESS  (Inspect AI)         │
-                         │  safety_task.py                               │
-                         │                                               │
-   json_dataset ────────▶│  @task → Dataset[Sample]                      │
-                         │  solver: prompt template + generate()         │
-   GPT-4o / Claude ─────▶│  model emits G_pred (strict JSON)             │
-                         │  @scorer: parse → set P/R/F1 vs target G       │
-                         └───────────────────┬──────────────────────────┘
-                                             │  .eval log (per-sample scores + transcript)
-                                             ▼
-                         ┌──────────────────────────────────────────────┐
-                         │           RESULTS / TRACKING                  │
-                         │  inspect view  (interactive)                  │
-                         │  export.py → runs/<date>_<model>/results.csv  │
-                         │  figure.py  → paper/figures/f1_by_intent.pdf  │
-                         └──────────────────────────────────────────────┘
+   topology specs ─┐
+   intent specs  ──┤   ┌──────────── TASK GENERATOR (netbrace safety generate) ───────────┐
+                   └──▶│ render baseline FRR (Jinja) → apply Δ → pre/ and post/ configs   │
+                       │ emit TaskSpec JSON (validated against Pydantic schema)            │
+                       └───────────────────────────────┬─────────────────────────────────┘
+                                                        │
+                       ┌──────────── ORACLE (netbrace safety oracle) ──────────────────────┐
+                       │ Batfish DIFFERENTIAL: q.answer(snapshot=S1, reference_snapshot=S0)│
+                       │ filter to watched prefixes → normalize → BlastRadius (stable keys)│
+                       │ 3× determinism check; write into TaskSpec.oracle                  │
+                       └───────────────────────────────┬─────────────────────────────────┘
+        ============== model-free, deterministic, cached ===│=== model eval, re-runnable ===
+                                                        │
+                       ┌──────────── EVAL (Inspect AI; netbrace eval run) ─────────────────┐
+   GPT-4o / Claude ───▶│ json_dataset(TaskSpec) → solver(prompt+generate) → G_pred         │
+                       │ @scorer = netbrace grader (set P/R/F1, trap, invalid-vs-fail)      │
+                       │ Inspect .eval log = source of truth (transcript, tokens, cost)    │
+                       └───────────────────────────────┬─────────────────────────────────┘
+                                                        │
+                       ┌──────────── REPORT (netbrace report) ─────────────────────────────┐
+                       │ read .eval log → RunManifest + results.csv + failure_modes.csv    │
+                       │ → paper/figures/safety_f1_by_intent.pdf                           │
+                       └──────────────────────────────────────────────────────────────────┘
 ```
 
-Two halves with a clean seam: **everything left of the dotted line is deterministic and model-free** (generation + oracle), runs once, and is cached as task JSON. **Everything right is the model eval**, re-runnable per model with zero Batfish dependency. This means model runs are cheap, reproducible, and don't need the lab up.
+**[DECISION] Inspect AI is central, not a fast-follow.** It owns the run loop, provider adapters, logging, caching, cost capture, and the `inspect view` transcript browser. Our `RunManifest` is a *thin export* of the Inspect log for paper reproducibility — never a parallel runner. Left of the seam is deterministic and model-free (runs once, cached); right of the seam needs no Batfish and no lab.
 
 ---
 
-## 4. Schemas
+## 4. Data contracts
 
-All schemas are JSON, one file per concept, validated with `jsonschema`. Versioned by a top-level `schema_version` field so the dataset format can evolve without silently breaking the grader.
+**[DECISION]** Pydantic v2 models in `netbrace/core/schemas.py` are the source of truth; JSON Schema is generated from them into `schemas/`. Every artifact on disk round-trips through these models. Keys are **fully-qualified strings** (VRF-safe), not bare tuples, so the same schema survives the move to multi-VRF / eBGP.
 
-### 4.1 Topology schema — `schemas/topology.schema.json`
+### 4.1 Stable IDs
+```
+task_id   : safety.<protocol>.<intent>.<topo_family>.<index>   e.g. safety.bgp.shut_neighbor.square4.0001
+run_id    : YYYY-MM-DD_<model_slug>_<suite>_<solver>           e.g. 2026-06-14_gpt4o_safety_v0_direct
+prompt_id : safety_direct_v0:<sha256[:12]>
+snapshot  : <task_id>:pre | <task_id>:post
+```
 
-Declarative, vendor-neutral. The generator renders this into FRR configs. Designed so we can swap the renderer for Arista cEOS later without touching topologies.
-
+### 4.2 TaskSpec — `schemas/task.schema.json`
+Self-contained; carries everything to regenerate the prompt, rebuild snapshots, and re-grade.
 ```json
 {
-  "schema_version": "topo-1",
-  "topo_id": "rr_hier_8n",
-  "description": "8-node iBGP route-reflector hierarchy, single AS",
-  "asn_default": 65000,
-  "nodes": [
-    {
-      "name": "rr1",
-      "role": "route-reflector",         // route-reflector | client | edge | core
-      "router_id": "10.0.0.1",
-      "loopback": "10.0.0.1/32",
-      "asn": 65000
-    }
-  ],
-  "links": [
-    {
-      "a": {"node": "rr1", "iface": "eth1", "ip": "192.0.2.1/30"},
-      "b": {"node": "c1",  "iface": "eth1", "ip": "192.0.2.2/30"}
-    }
-  ],
-  "bgp": {
-    "type": "ibgp-full-mesh",            // ibgp-full-mesh | ibgp-rr | ebgp | mixed
-    "sessions": [
-      {"local": "rr1", "peer": "c1", "peer_ip": "10.0.0.2",
-       "rr_client": true, "next_hop_self": true, "update_source": "lo"}
-    ],
-    "originated_prefixes": [
-      {"node": "c1", "prefix": "10.0.0.2/32"}
-    ]
-  },
-  "static_routes": [
-    {"node": "rr1", "dest": "10.0.0.2/32", "next_hop": "192.0.2.2"}
-  ]
+  "schema_version": "netbrace.task.v0",
+  "task_id": "safety.bgp.shut_neighbor.square4.0001",
+  "family": "bgp", "intent": "shut_neighbor", "difficulty": "easy", "seed": 1,
+  "topology": {"name": "square4", "nodes": ["r1","r2","r3","r4"],
+               "links": [{"a_node":"r1","a_intf":"eth1","b_node":"r2","b_intf":"eth1"}],
+               "routing_protocols": ["bgp"]},
+  "baseline": {"config_format": "frr", "configs": {"r1": "...", "r2": "..."}},
+  "change": {"change_id": "change.r1.shut_10_0_0_2", "format": "unified_diff",
+             "target_nodes": ["r1"], "patch": "--- r1.conf\n+++ r1.conf\n...",
+             "description": "Shut down the BGP neighbor 10.0.0.2 on r1 to drain it."},
+  "watched_prefixes": ["10.0.0.1/32","10.0.0.2/32","10.0.0.3/32","10.0.0.4/32"],
+  "presentation": {"prompt_template_id": "safety_direct_v0",
+                   "operator_question": "Which BGP sessions and prefixes are lost after this change?"},
+  "oracle": {"status": "ready", "engine": "batfish", "engine_version": "...",
+             "computed_at": "...", "blast_radius": { /* §4.3 */ }},
+  "meta": {"is_trap": false, "hand_validated": false, "source": "generated"}
 }
 ```
+**Validation rules:** `schema_version` exact; `task_id` matches filename; config node names ⊆ topology nodes; `change.target_nodes` valid; patch applies cleanly; prompt template exists; if `oracle.status == ready`, blast-radius is non-empty **unless** `meta.is_trap == true`.
 
-> Mirrors the verified `frr_square` lab exactly (AS 65000, /32 loopbacks, /30 links, static routes for loopback reachability so iBGP `update-source lo` sessions can form). The `role` and `bgp.type` fields are what let us scale to the harder topology levels (RR hierarchy, dual-homed eBGP) without new code.
-
-### 4.2 Intent / diff schema — `schemas/intent.schema.json`
-
-The catalog of change types. Each intent is a parametric mutation over a baseline. This is the axis of difficulty.
-
+### 4.3 BlastRadius — stable keyed sets (the canonical `G`)
+Scoring keys are stable strings; human labels are extra metadata, never the key.
 ```json
 {
-  "schema_version": "intent-1",
-  "intent_id": "shut_neighbor",
-  "category": "bgp",                      // bgp | filter | policy | interface
-  "params": {
-    "node": "rr1",
-    "neighbor_ip": "10.0.0.2"
-  },
-  "mutation": {                           // how the renderer edits the config
-    "op": "add_lines",
-    "target_block": "router bgp 65000",
-    "lines": ["neighbor 10.0.0.2 shutdown"]
-  },
-  "nl_description": "Operator shuts down the BGP neighbor 10.0.0.2 on rr1 to drain it for maintenance.",
-  "expected_blast_class": "session_and_dependent_prefixes"
+  "sessions_lost": [
+    {"key": "bgp|vrf=default|node=r1|peer_ip=10.0.0.2",
+     "node": "r1", "vrf": "default", "peer_ip": "10.0.0.2"}],
+  "prefixes_lost": [
+    {"key": "route|node=r3|vrf=default|prefix=10.0.0.2/32",
+     "node": "r3", "vrf": "default", "prefix": "10.0.0.2/32"}],
+  "reachability_lost": [
+    {"key": "reach|src=r3|dst=10.0.0.2/32|vrf=default",
+     "src_node": "r3", "dst_prefix": "10.0.0.2/32", "vrf": "default"}]
 }
 ```
+Normalization (enforced by the oracle): nodes lowercased; prefixes canonical CIDR; sessions keyed by `(observing_node, peer_ip)` so a loss seen from both ends yields both rows; lists sorted + deduped so comparison is order-independent.
 
-**v0 intent catalog (the 4 we ship first):**
+> **[DECISION] Sessions / prefixes / reachability score for v0.** `interfaces_affected` and `services_affected` stay in the schema (so the paper can discuss extension) but are not scored in v0.
 
-| `intent_id` | What it does | Why it's interesting for blast-radius |
-|---|---|---|
-| `shut_neighbor` | `neighbor X shutdown` | Direct session loss + *transitive* prefix loss for prefixes only reachable via that peer. LLMs miss the transitive part. |
-| `add_prefix_filter` | `route-map` / `prefix-list` deny on a neighbor | Selective prefix loss; tests whether model reads the filter semantics. |
-| `change_local_pref` | `set local-preference` in an inbound route-map | Often a *trap*: no blast radius (traffic shifts but nothing is lost). Tests false-positive rate. |
-| `remove_network_statement` | drop a `network X` under address-family | Prefix withdrawn fleet-wide; every other node loses it. Wide blast radius from a one-line change. |
+### 4.4 ModelPrediction — `schemas/prediction.schema.json`
+Mirrors `G` plus non-scored `confidence`/`rationale`. The parser is **forgiving about endpoint order, strict about node/prefix validity**: a predicted node or prefix that doesn't exist in the topology is dropped and counted toward a `hallucinated_refs` metric.
 
-> `change_local_pref` is deliberately a near-zero-blast-radius case. A model that screams "outage!" at every diff scores terribly on it. This is how we separate models that *reason* from models that *pattern-match on scary keywords*.
-
-### 4.3 Task schema — `schemas/task.schema.json`
-
-The atomic unit. One file per task: `tasks/safety/v0/<task_id>.json`. Self-contained — carries everything the harness and grader need.
-
+### 4.5 RunManifest — the reproducibility record (thin export of the Inspect log)
 ```json
 {
-  "schema_version": "task-1",
-  "task_id": "v0_shut_neighbor_rrhier_0007",
-  "topo_id": "rr_hier_8n",
-  "intent_id": "shut_neighbor",
-  "intent_params": {"node": "rr1", "neighbor_ip": "10.0.0.2"},
-
-  "presentation": {
-    "topology_summary": "8 routers in AS 65000. rr1/rr2 are route reflectors; c1..c6 are clients...",
-    "device_configs": {                  // the configs the MODEL sees (baseline only)
-      "rr1": "<FRR config text>",
-      "c1": "<FRR config text>"
-    },
-    "proposed_change": "On rr1, add: `neighbor 10.0.0.2 shutdown`"
-  },
-
-  "artifacts": {                          // pointers for the oracle; NOT shown to model
-    "pre_config_dir":  "tasks/safety/v0/_configs/v0_..._0007/pre",
-    "post_config_dir": "tasks/safety/v0/_configs/v0_..._0007/post"
-  },
-
-  "ground_truth": {                       // filled by oracle.py — see 4.4
-    "sessions_lost": [["rr1","10.0.0.2"], ["rr2","10.0.0.2"]],
-    "prefixes_lost": [["c3","10.0.0.2/32"], ["c4","10.0.0.2/32"]],
-    "reachability_lost": [["c3","10.0.0.2"], ["c4","10.0.0.2"]],
-    "oracle": {
-      "batfish_version": "...",
-      "computed_at": "2026-06-..",
-      "deterministic": true,             // verified: 3 reruns identical
-      "snapshot_load_s": 0.27
-    }
-  },
-
-  "meta": {
-    "difficulty": "medium",
-    "hand_validated": false,
-    "is_trap": false                     // true for the no-blast-radius cases
-  }
+  "schema_version": "netbrace.run_manifest.v0",
+  "run_id": "2026-06-14_gpt4o_safety_v0_direct",
+  "suite_id": "safety/v0", "suite_hash": "<sha256 of task set>",
+  "git_commit": "c579cef", "git_dirty": false,
+  "model": {"provider": "openai", "model_name": "gpt-4o", "temperature": 0.0,
+            "max_output_tokens": 4096},
+  "prompt_id": "safety_direct_v0:abc123def456",
+  "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+  "environment": {"python": "...", "inspect_ai": "...", "pybatfish": "...", "batfish": "..."},
+  "created_at": "...", "command": "netbrace eval run ..."
 }
 ```
-
-### 4.4 Ground-truth schema — embedded `ground_truth` block (above)
-
-The canonical representation of `G`. Three sets, each a list of tuples, **sorted and deduplicated** so set comparison is order-independent. Normalization rules (enforced by `oracle.py`):
-
-- Node names lowercased; prefixes in canonical CIDR (`10.0.0.2/32`, not `10.0.0.2`).
-- A session is keyed by `(observing_node, peer_ip)` — directional, because a session loss is observed from both endpoints and we want both.
-- `prefixes_lost[i] = (node, prefix)` means: prefix was in `node`'s main RIB in S0 and is absent in S1.
-- `reachability_lost[i] = (src_node, dst_loopback_ip)` means: traceroute from src to dst succeeded in S0, fails in S1.
-
-### 4.5 LLM interface — prompt contract + response schema
-
-**Prompt** (rendered by the Inspect solver from `presentation`): system message sets the role and the *exact output contract*; user message carries topology summary, configs, and the proposed change.
-
-**Response contract** — the model MUST return a single fenced JSON object:
-
-```json
-{
-  "sessions_lost":     [["rr1","10.0.0.2"]],
-  "prefixes_lost":     [["c3","10.0.0.2/32"]],
-  "reachability_lost": [["c3","10.0.0.2"]],
-  "reasoning": "rr1 reflects c2's prefix to clients; shutting it..."
-}
-```
-
-Parsing rules (in the scorer, tolerant by design so we grade *prediction quality* not *JSON skill*):
-- Extract the last ```json fenced block; fall back to the last `{...}` span.
-- Coerce single IPs to `/32`, lowercase nodes, dedupe.
-- Missing key → empty set (counts as "predicted nothing" for that type).
-- Unparseable output → score 0 on all types, flagged `parse_fail: true` in metadata (tracked separately so we can report parse-failure rate honestly).
-
-### 4.6 Scoring schema — `Score` value written by the `@scorer`
-
-```json
-{
-  "value": 0.57,                          // headline = macro-F1 across the 3 types
-  "answer": "<model JSON>",
-  "metadata": {
-    "per_type": {
-      "sessions":     {"tp":1,"fp":0,"fn":1,"precision":1.0,"recall":0.5,"f1":0.667},
-      "prefixes":     {"tp":2,"fp":1,"fn":0,"precision":0.667,"recall":1.0,"f1":0.8},
-      "reachability": {"tp":0,"fp":0,"fn":2,"precision":0.0,"recall":0.0,"f1":0.0}
-    },
-    "macro_f1": 0.57,
-    "micro_f1": 0.61,                     // pooled tp/fp/fn across types
-    "exact_match": false,                 // G_pred == G exactly
-    "parse_fail": false,
-    "is_trap": false
-  }
-}
-```
-
-> For trap tasks (empty `G`), precision/recall are undefined by the standard formula. Rule: if `G` is empty and `G_pred` is empty → F1 = 1.0 (correctly predicted "no impact"); if `G` empty and `G_pred` non-empty → F1 = 0.0 (false alarm). Tracked separately as `false_alarm_rate`.
-
-### 4.7 Run / tracking schema
-
-Inspect AI writes a `.eval` log per run (per-sample scores, full transcript, model params, token counts, cost) into `runs/<date>_<model>_safety/logs/`. We add one derived artifact for the paper:
-
-```
-runs/2026-06-14_gpt4o_safety_v0/
-├── logs/                       # native Inspect .eval files (source of truth)
-├── results.csv                 # flattened: task_id, intent_id, model, macro_f1,
-│                               #   per-type p/r/f1, parse_fail, is_trap, tokens, cost
-└── summary.json                # aggregates: mean F1 overall + per intent_id + per model
-```
-
-`export.py` reads the `.eval` log via `inspect_ai.log.read_eval_log` and writes `results.csv` — never hand-rolled, always derived from the immutable log.
+No secrets, no API keys, no full env dumps are ever written.
 
 ---
 
-## 5. The ground-truth oracle (how Batfish gives us truth for free)
+## 5. The oracle (Batfish gives us truth for free)
 
-This is the load-bearing idea of the whole paper. Batfish models the control plane statically: feed it configs, it computes the resulting BGP sessions, RIBs, and forwarding — **without booting a single router**. Snapshot load is ~0.27s (measured on `frr_square`).
+Batfish models the control plane statically — feed it configs, it computes resulting sessions, RIBs, forwarding, with no routers booted (snapshot load ≈ 0.27 s, measured on `frr_square`). For each task, `netbrace/batfish/oracle.py`:
 
-For each task, `oracle.py`:
-
-1. Builds **two snapshots** from the generated configs:
-   - `S0` = baseline (`pre/` config dir)
-   - `S1` = baseline + Δ (`post/` config dir)
-2. Runs Batfish **differential questions** — every question accepts `snapshot=` and `reference_snapshot=`:
+1. Materialize `pre/` (baseline) and `post/` (baseline + patch) config dirs.
+2. Init Batfish snapshots `S0`, `S1`; assert both **parse clean** (`fileParseStatus`, `initIssues`) — a parse failure fails loudly and dumps debug.
+3. **[DECISION] Differential questions + watched-prefix filter** (composes the two plans):
    ```python
    sess = bf.q.bgpSessionStatus().answer(snapshot=S1, reference_snapshot=S0).frame()
    rts  = bf.q.routes().answer(snapshot=S1, reference_snapshot=S0).frame()
    ```
-   Differential mode returns only the rows that **changed** between snapshots, tagged with which snapshot they came from. Sessions that flipped ESTABLISHED→not and routes that vanished *are* the blast radius — computed, not guessed.
-3. For `reachability_lost`, runs `traceroute` between all loopback pairs on both snapshots and diffs the success set (cheaper alternative under evaluation: `differentialReachability`).
-4. Normalizes into the `ground_truth` block (4.4) and writes it back into the task JSON.
+   Differential mode returns only *changed* rows. Keep session rows that went ESTABLISHED→not; keep route rows that were present in `S0`, absent in `S1`, **and whose prefix ∈ `watched_prefixes`** (kills connected/transit clutter).
+4. `reachability_lost`: pairwise `traceroute` over watched loopback pairs on both snapshots, diff the success set. (`differentialReachability` evaluated as a faster alternative — see §13 Q1.)
+5. Normalize → `BlastRadius` (§4.3); write into `TaskSpec.oracle`.
 
-**Determinism guarantee:** each ground truth is computed 3× and required to be byte-identical; non-deterministic tasks are dropped. Batfish is deterministic by construction, so this is a guard against generator bugs, not against Batfish.
+**Determinism gate:** compute each task's `BlastRadius` 3×, hash the normalized output; any task with inconsistent hashes is quarantined, not shipped. Batfish is deterministic, so this catches *generator* bugs.
 
-**Oracle validation (the κ check, scaled down for HotNets):** for 5 tasks, stand up the *actual* `frr_square`-style topology in containerlab, apply Δ live, and confirm the real `show ip bgp summary` / RIB matches Batfish's prediction. This is the "we checked the oracle against reality" paragraph reviewers will want. Full Cohen's κ over 100 tasks is deferred to the NeurIPS extension.
+**Oracle validation (scaled-down κ):** for 5 tasks, stand the topology up live in containerlab, apply `Δ`, and confirm real `show ip bgp summary` / RIB matches Batfish. This is the "we checked the oracle against reality" paragraph reviewers want. Full 100-task Cohen's κ → NeurIPS extension.
 
-References: [Batfish differential questions](https://batfish.readthedocs.io/en/latest/notebooks/differentialQuestions.html), [forwarding change validation](https://batfish.readthedocs.io/en/latest/notebooks/linked/introduction-to-forwarding-change-validation.html), [bgpSessionStatus](https://batfish.readthedocs.io/en/stable/notebooks/linked/introduction-to-bgp-analysis.html).
+Refs: [Batfish differential questions](https://batfish.readthedocs.io/en/latest/notebooks/differentialQuestions.html), [forwarding change validation](https://batfish.readthedocs.io/en/latest/notebooks/linked/introduction-to-forwarding-change-validation.html), [bgpSessionStatus](https://batfish.readthedocs.io/en/stable/notebooks/linked/introduction-to-bgp-analysis.html).
 
 ---
 
 ## 6. The grader
 
-Pure set arithmetic, no ML, fully deterministic — exactly what a reviewer wants for a benchmark.
-
-For each element type `t ∈ {sessions, prefixes, reachability}`:
+Pure set arithmetic, fully deterministic, unit-tested before any model runs. For each type `t ∈ {sessions, prefixes, reachability}`:
 ```
-TP = |G_pred[t] ∩ G[t]|
-FP = |G_pred[t] \ G[t]|
-FN = |G[t] \ G_pred[t]|
-precision = TP / (TP + FP)      # 0 if denom 0
-recall    = TP / (TP + FN)      # 0 if denom 0
-f1        = 2PR / (P + R)       # 0 if denom 0
+TP=|Gpred[t]∩G[t]|  FP=|Gpred[t]\G[t]|  FN=|G[t]\Gpred[t]|
+precision=TP/(TP+FP)  recall=TP/(TP+FN)  f1=2PR/(P+R)   (0 if denom 0)
 ```
-- **macro-F1** = mean of the three per-type F1s → the headline number.
-- **micro-F1** = pooled TP/FP/FN across types → secondary.
-- **exact_match** = `G_pred == G` → the hardest bar, reported as a second column.
+- **macro-F1** = mean of the three per-type F1s → headline number.
+- **micro-F1** = pooled TP/FP/FN → secondary.
+- **exact_match** = `G_pred == G` → reported as a second column.
 
-Trap handling per 4.6. Everything lands in the `Score.metadata` so the paper figure can break F1 down by intent type and show the false-alarm column.
+**Trap / empty-set rules** (the science from plan A):
+- `G` empty ∧ `G_pred` empty → F1 = 1.0 (correctly predicted "no impact").
+- `G` empty ∧ `G_pred` non-empty → F1 = 0.0, counted toward **`false_alarm_rate`**.
+- `change_local_pref` traps deliberately have empty `G`; they separate models that *reason* from models that *panic at scary keywords*. This is a headline result, not an afterthought.
+
+**[DECISION] Invalid ≠ wrong.** Unparseable / schema-violating output → status `invalid`, F1 = 0 in the aggregate, but tracked in a separate **`invalid_rate`** so a model's JSON-formatting failures never masquerade as reasoning failures. Status ladder: `pass` (exact or F1≥0.8) · `partial` (0<F1<0.8) · `fail` (valid, F1=0) · `invalid` · `error`.
+
+Outputs feed a **failure-mode table by intent** (missing vs. extra sessions/prefixes per intent) for the §4 results narrative.
 
 ---
 
-## 7. Inspect AI integration (what we write vs. what we get free)
+## 7. Inspect AI integration — three small files
 
-We get free: model adapters (OpenAI, Anthropic, Google), retries/rate-limits, cost+token logging, parallel sampling, the `.eval` log format, and `inspect view` (an interactive transcript browser — invaluable for failure analysis in §4 of the paper).
-
-We write three small files:
+We get free: provider adapters (OpenAI/Anthropic/Google), retries, rate-limits, token+cost logging, parallel sampling, the `.eval` log, and `inspect view`. We write:
 
 ```python
-# harness/safety/safety_task.py
-from inspect_ai import task, Task
-from inspect_ai.dataset import json_dataset, FieldSpec
-from inspect_ai.solver import generate, system_message, prompt_template
-
+# netbrace/evals/inspect_safety.py
 @task
-def blast_radius(version: str = "v0") -> Task:
+def blast_radius(suite: str = "v0") -> Task:
     return Task(
-        dataset=json_dataset(
-            f"tasks/safety/{version}/_index.jsonl",
-            FieldSpec(input="presentation", target="ground_truth", id="task_id",
-                      metadata=["intent_id", "topo_id", "meta"]),
-        ),
+        dataset=json_dataset(f"tasks/safety/{suite}/_index.jsonl",
+            FieldSpec(input="presentation", target="oracle", id="task_id",
+                      metadata=["intent","family","meta","watched_prefixes"])),
         solver=[system_message(SAFETY_CONTRACT), prompt_template(TASK_TEMPLATE), generate()],
         scorer=blast_radius_scorer(),
     )
-```
 
-```python
-# harness/safety/scorer.py
-from inspect_ai.scorer import scorer, Score, Target, mean, stderr
-from inspect_ai.solver import TaskState
-
+# netbrace/evals/scorers.py
 @scorer(metrics=[mean(), stderr()])
 def blast_radius_scorer():
-    async def score(state: TaskState, target: Target) -> Score:
-        pred = parse_prediction(state.output.completion)   # tolerant parser, 4.5
-        truth = json.loads(target.text)                    # ground_truth block
-        per_type, macro_f1 = prf1(pred, truth)             # §6
+    async def score(state, target):
+        pred = parse_prediction(state.output.completion)     # tolerant, §4.4
+        G    = BlastRadius.model_validate_json(target.text)   # canonical truth
+        per_type, macro_f1, flags = grade(pred, G)            # §6
         return Score(value=macro_f1, answer=state.output.completion,
-                     metadata={"per_type": per_type, ...})
+                     metadata={"per_type": per_type, **flags})
     return score
+
+# netbrace/prompts/safety_direct_v0.md  — SAFETY_CONTRACT + TASK_TEMPLATE (versioned, hashed)
 ```
 
-```python
-# harness/safety/prompts.py   — SAFETY_CONTRACT + TASK_TEMPLATE (4.5)
-```
-
-Run:
+Run (the `netbrace` CLI wraps these; raw Inspect also works):
 ```bash
-inspect eval harness/safety/safety_task.py --model openai/gpt-4o      --log-dir runs/2026-06-14_gpt4o_safety_v0/logs
-inspect eval harness/safety/safety_task.py --model anthropic/claude-3-7-sonnet-latest --log-dir runs/.../logs
-inspect view --log-dir runs/2026-06-14_gpt4o_safety_v0/logs        # failure analysis
+netbrace eval run  --suite tasks/safety/v0 --model openai/gpt-4o --run-id 2026-06-14_gpt4o_safety_v0_direct
+netbrace grade     --run runs/2026-06-14_gpt4o_safety_v0_direct
+inspect view      --log-dir runs/2026-06-14_gpt4o_safety_v0_direct/logs   # failure analysis
 ```
-
-Sources: [Inspect AI](https://inspect.aisi.org.uk/), [datasets](https://inspect.aisi.org.uk/datasets.html), [scorers](https://inspect.aisi.org.uk/scorers.html).
+Refs: [Inspect AI](https://inspect.aisi.org.uk/), [datasets](https://inspect.aisi.org.uk/datasets.html), [scorers](https://inspect.aisi.org.uk/scorers.html).
 
 ---
 
-## 8. Directory layout
+## 8. Package layout (thin — no runner, no router backend for v0)
 
 ```
-NetHelm/
-├── plan.md                         ← this file
-├── schemas/
-│   ├── topology.schema.json
-│   ├── intent.schema.json
-│   ├── task.schema.json
-│   └── prediction.schema.json
-├── topologies/
-│   ├── frr_square.topo.json        ← the verified 4-node lab, as a topo spec
-│   └── rr_hier_8n.topo.json        ← Level-2 RR hierarchy
-├── intents/
-│   ├── shut_neighbor.intent.json
-│   ├── add_prefix_filter.intent.json
-│   ├── change_local_pref.intent.json
-│   └── remove_network_statement.intent.json
-├── harness/
-│   ├── safety/
-│   │   ├── generate_v0.py          ← Jinja renderer: topo+intent → pre/post FRR configs + task JSON
-│   │   ├── oracle.py               ← pybatfish differential → ground_truth
-│   │   ├── safety_task.py          ← Inspect @task
-│   │   ├── scorer.py               ← Inspect @scorer (P/R/F1)
-│   │   ├── prompts.py
-│   │   └── export.py               ← .eval log → results.csv + summary.json
-│   ├── templates/                  ← Jinja2 FRR config templates
-│   │   ├── frr_base.conf.j2
-│   │   └── interfaces.j2
-│   └── venvs/{batfish,netconfeval} ← existing
-├── tasks/safety/v0/
-│   ├── _index.jsonl                ← one line per task (Inspect dataset)
-│   ├── _configs/<task_id>/{pre,post}/
-│   └── <task_id>.json              ← full task w/ ground truth
-└── runs/<date>_<model>_safety_v0/  ← Inspect logs + results.csv + figure
+NetBrace/
+├── plan.md                     ← this file
+├── pyproject.toml              ← netbrace package (replaces ad-hoc requirements)
+├── schemas/                    ← JSON Schema generated from Pydantic
+│   ├── task.schema.json  prediction.schema.json  blastradius.schema.json
+├── netbrace/
+│   ├── cli.py                  ← `netbrace` (Typer): generate · validate · oracle · eval · grade · report · lab
+│   ├── core/                   ← schemas.py (Pydantic)  jsonio.py  ids.py  hashing.py
+│   ├── tasks/safety/           ← generator.py  templates.py  validate.py  (+ Jinja in templates/)
+│   ├── topology/               ← model.py  patches.py (unified-diff apply)  frr.py (renderer)
+│   ├── batfish/                ← client.py  oracle.py  normalize.py
+│   ├── models/                 ← fake.py  replay.py   (API-free dev; real calls go through Inspect)
+│   ├── evals/                  ← inspect_safety.py  scorers.py
+│   ├── graders/                ← sets.py  safety.py  (pure, unit-tested)
+│   ├── prompts/                ← safety_direct_v0.md
+│   ├── routers/                ← containerlab_readonly.py  (show-commands ONLY, for 5-task validation)
+│   └── reporting/              ← summarize.py  figures.py
+├── tasks/safety/v0/            ← _index.jsonl  manifest.json  _configs/<task_id>/{pre,post}/  <task_id>.json
+├── runs/<run_id>/              ← logs/ (Inspect .eval)  manifest.json  results.csv  failure_modes.csv
+├── tests/                      ← unit/  fixtures/  integration/   (§10)
+└── scripts/                    ← start_batfish.sh  check_env.sh  smoke_safety_v0.sh
 ```
+`external/netconfeval/` is untouched during the sprint.
 
 ---
 
-## 9. Build sequence (maps to the HotNets sprint weeks)
+## 9. CLI surface (stable, paste-into-README)
 
-| Step | File(s) | Output | Sprint slot |
+```bash
+netbrace env check
+netbrace safety generate --suite v0 --count 20 --seed 20260606 --out tasks/safety/v0
+netbrace safety validate --suite tasks/safety/v0 [--require-oracle]
+netbrace safety oracle   --suite tasks/safety/v0 --batfish-host 127.0.0.1 --overwrite
+netbrace eval fake       --suite tasks/safety/v0 --run-id fake_safety_v0      # API-free E2E
+netbrace eval run        --suite tasks/safety/v0 --model openai/gpt-4o --limit 3 --run-id smoke_gpt4o
+netbrace grade           --run runs/<run_id>
+netbrace report          --run runs/<run_id> --figures paper/figures
+netbrace lab exec        --node r1 --cmd "vtysh -c 'show bgp summary'"        # read-only validation
+```
+Every command: `--verbose`, non-zero exit on validation failure, prints the artifact path it wrote.
+
+---
+
+## 10. Test strategy **[DECISION: no model run before schemas / patching / oracle / grader have unit coverage]**
+
+**Unit (macOS, no Docker) — `pytest tests/unit`:**
+`test_task_schema_round_trip` · `test_task_id_matches_filename` · `test_prediction_rejects_unknown_node` · `test_apply_unified_diff_success` · `test_apply_unified_diff_rejects_bad_context` · `test_blastradius_key_normalization_endpoint_order` · `test_score_sets_{exact,missing,extra,empty_empty}` · `test_trap_empty_pred_scores_1` · `test_trap_nonempty_pred_false_alarm` · `test_invalid_json_is_invalid_not_crash` · `test_macro_micro_f1` · `test_manifest_hash_stable`.
+
+**Batfish integration — `pytest -m batfish` (lab host):**
+`test_frr_square_parses` · `test_bgp_sessions_detected_pre` · `test_oracle_shut_neighbor_loses_session` · `test_oracle_remove_network_loses_prefix` · `test_oracle_deterministic_three_runs`.
+
+**Containerlab — `pytest -m containerlab` (lab host, pre-run smoke only):** deploy/exec/destroy `frr_square`, confirm ESTABLISHED sessions.
+
+**Fake/replay E2E — `scripts/smoke_safety_v0.sh`:** generate 3 tasks → oracle → fake model emits exact/partial/invalid → grade → assert summary has `pass=1, partial=1, invalid=1`. No API key required.
+
+Golden fixtures live in `tests/fixtures/` (a minimal task, a valid prediction, an invalid-node prediction, an FRR baseline + a neighbor-removed patch).
+
+---
+
+## 11. Build order — vertical slice first, mapped to the sprint
+
+Each step ends with a runnable command and a saved artifact. **Do not waterfall** — get one ugly-but-correct `generate → oracle → fake-model → grade → figure` slice working, then harden.
+
+| Step | Deliverable | Proof command | Sprint slot |
 |---|---|---|---|
-| 1 | `schemas/*.json` | Frozen schemas, validated | Week A Mon |
-| 2 | `topologies/frr_square.topo.json` + `templates/*.j2` + `generate_v0.py` | Re-render the verified lab from a topo spec; configs Batfish-parse | Week A Mon/Tue |
-| 3 | `intents/*.json` + mutation engine in `generate_v0.py` | 4 intents apply cleanly, post-configs parse | Week A Tue/Wed |
-| 4 | `oracle.py` | `ground_truth` populated; determinism check passes | Week A Wed/Thu |
-| 5 | generate 20 tasks; hand-validate 5 (incl. 1 live containerlab check) | `tasks/safety/v0/` with 20 graded tasks | Week A Fri/Sat |
-| 6 | `safety_task.py` + `scorer.py` + `prompts.py` | `inspect eval` runs end-to-end on 1 task | Week B Mon/Wed |
-| 7 | full GPT-4o run + `export.py` | `results.csv`, mean F1 in 20–70% band | Week B Sat/Sun |
-| 8 | add `rr_hier_8n`, scale to 50, add Claude | 50 tasks × 2 models | Week C |
-| 9 | `figure.py` | `f1_by_intent.pdf` | Week C Sat |
+| 0 | `pyproject.toml` + package skeleton + Pydantic schemas + unit tests | `pytest tests/unit -q` · `netbrace --help` | Wk A Mon |
+| 1 | Generator: `square4` FRR from verified lab shape; `shut_neighbor` + `remove_network`; patch apply | `netbrace safety generate --count 5` · `netbrace safety validate` | Wk A Mon/Tue |
+| 2 | Batfish oracle (differential + watched-prefix) + determinism gate | `netbrace safety oracle` · `pytest -m batfish` | Wk A Wed/Thu |
+| 3 | Grader + fake/replay E2E | `bash scripts/smoke_safety_v0.sh` | Wk A Thu |
+| 4 | 20 tasks; hand-validate 5 (incl. 1 live containerlab check) | `tasks/safety/v0/` populated | Wk A Fri/Sat |
+| 5 | Inspect task + scorer + prompt; 1-task real GPT-4o smoke (<$10) | `netbrace eval run --limit 1` | Wk B Mon/Wed |
+| 6 | Full GPT-4o run + report | `netbrace report` → `results.csv` | Wk B Sat/Sun |
+| 7 | Add `rr_hier_8n` + `add_prefix_filter` + `change_local_pref` trap; scale to 50; add Claude | 50 tasks × 2 models | Wk C |
+| 8 | `safety_f1_by_intent.pdf` + failure-mode table | `paper/figures/` | Wk C Sat |
 
-**Sanity gate after Step 7:** if GPT-4o macro-F1 > 80%, tasks are too easy (add transitive-impact intents, bigger topologies); if < 10%, the prompt contract or parser is broken (inspect the transcript via `inspect view`). Target band: **20–70%**.
+**Sanity gate after Step 6:** GPT-4o macro-F1 should land in **20–70%**. >80% → tasks too easy (add transitive-withdrawal, route-map ordering, next-hop-self). <10% → prompt/parser broken (inspect via `inspect view`).
 
 ---
 
-## 10. Determinism, validity, and what reviewers will attack
+## 12. Reproducibility rules (non-negotiable — accuracy mandate)
 
-| Reviewer objection | Our answer (built into the design) |
+1. Every number in the paper comes from a committed script/CLI command.
+2. Every task JSON validates before evaluation.
+3. Every oracle result is reproducible from baseline config + patch, and passed the 3× determinism gate.
+4. Every model result preserves raw output, parsed output, score, prompt-id, and model metadata (via the Inspect log + `RunManifest`).
+5. Every scoring rule has a unit test.
+6. No HotNets-v0 ground truth depends on live router state — Batfish is the oracle; routers are validation only.
+7. Router write tools are opt-in and out of scope for v0; agents (future) get read-only tools and never see post-change oracle output.
+8. Never hand-edit a run summary — fix the reporter and rerun.
+9. Prefer deleting/quarantining a broken generated task over salvaging an ambiguous one.
+
+---
+
+## 13. What reviewers will attack — and our built-in answer
+
+| Objection | Answer |
 |---|---|
-| "Ground truth is just another model's guess" | Batfish is a formal static analyzer, not an LLM; differential output is deterministic; we validate 5 tasks against live containerlab. |
-| "Synthetic tasks are unrealistic" | Topologies mirror real iBGP-RR designs; intents are real maintenance actions (drain a neighbor, add a filter). NOC-sourced scenarios are a stated extension. |
-| "Grader is gameable / fuzzy" | Pure set P/R/F1, exact-match column, tolerant parser scored separately so JSON-format failures don't masquerade as reasoning failures. |
-| "Models just need better prompting" | Single-shot is the stated scope; the contract is explicit and identical across models; `change_local_pref` traps catch keyword-panic strategies. |
-| "n=20 is too small" | Position paper / preliminary by HotNets norms; 50 by camera-ready; the *framework* is the contribution, the numbers are the motivation. |
-| "Determinism not shown" | 3× recompute identity check, dropped if non-identical; Batfish version pinned in every `ground_truth` block. |
+| "Ground truth is just another model's guess" | Batfish is a formal static analyzer; differential output is deterministic (3× gate); validated against live containerlab on 5 tasks. |
+| "Synthetic = unrealistic" | Topologies mirror real iBGP-RR designs; intents are real maintenance actions (drain a neighbor, add a filter). NOC-sourced scenarios are a stated extension. |
+| "Grader is fuzzy / gameable" | Pure set P/R/F1 over stable keys; exact-match column; `invalid` tracked separately from `fail`; hallucinated refs counted. |
+| "Just prompt it better" | Single-shot is the declared condition; identical contract across models; `change_local_pref` traps catch keyword-panic. |
+| "n=20 is too small" | Position-paper norm; 50 by camera-ready; the *framework + the trap finding* is the contribution, the numbers motivate it. |
+| "Not reproducible" | Suite hash + prompt hash + git commit in every `RunManifest`; figures regenerate from logs; pinned Batfish/Inspect versions. |
 
 ---
 
-## 11. Open technical questions (resolve during Week A)
+## 14. Open technical questions (resolve in Week A, before scaling past 5 tasks)
 
-1. **`differentialReachability` vs. pairwise `traceroute` diff** for `reachability_lost` — the former is one call but its semantics over loopback-to-loopback need confirming on FRR snapshots. Default to pairwise traceroute diff if unsure; it's slower but unambiguous.
-2. **Does Batfish model `neighbor shutdown` on FRR** as session-down (vs. parse-and-ignore)? Must verify in Step 4 — if not, switch the `shut_neighbor` mutation to removing the `neighbor remote-as` line, which Batfish definitely models.
-3. **iBGP transitive prefix loss** — confirm Batfish withdraws a client's prefix from other clients when the reflector is shut (RR hierarchy), since that transitive effect is the part LLMs miss and thus our most valuable signal.
-4. **FRR vs. Cumulus parse format** — Batfish parses these configs as Cumulus FRR; confirm `route-map`/`prefix-list` semantics for `add_prefix_filter` are modeled, else narrow v0 to BGP-session intents only.
-
-These four are exactly the `shut_neighbor` / `add_prefix_filter` checks the [sprint risk register](tasks/plan_2026-06-04_hotnets_sprint.md) flags for Week A. Resolve them before scaling past 5 tasks.
+1. **`differentialReachability` vs. pairwise-`traceroute` diff** for `reachability_lost` — confirm the former's loopback-to-loopback semantics on FRR snapshots; default to pairwise traceroute if unsure.
+2. **Does Batfish model FRR `neighbor shutdown`** as session-down (vs. parse-and-ignore)? If ignored, switch the `shut_neighbor` mutation to *removing* the `neighbor … remote-as` line, which Batfish definitely models.
+3. **iBGP transitive prefix loss** — confirm Batfish withdraws a client's prefix from other clients when the reflector is shut (RR hierarchy); this transitive effect is the highest-value signal because LLMs miss it.
+4. **FRR vs. Cumulus parse format + `route-map`/`prefix-list` semantics** — confirm modeled for `add_prefix_filter`; else narrow v0 to BGP-session intents.
 
 ---
 
-## 12. First action
+## 15. First action
 
-Step 1–2: freeze the schemas and re-render `frr_square` from a topo spec, proving the generator produces Batfish-parseable configs identical in behavior to the hand-built lab. Everything else builds on that single proof.
+**Step 0–1:** `pyproject.toml`, Pydantic schemas + unit tests, and the generator re-rendering `frr_square` from a spec — proving the generator produces Batfish-parseable configs identical in behavior to the verified hand-built lab. That single proof is what everything else stands on.

@@ -16,7 +16,7 @@ Scan for new publications in the LLM-for-networking and LLM-benchmark spaces tha
    - Does it **close a gap** claimed in §2.2 of the strategy doc? If so, this must be flagged as a BLOCKER — the contribution claim needs updating.
    - Does it **cite NetConfEval/Cornetto** in a way that's relevant to our positioning?
    - Is it **citable** as related work?
-   - Does it represent a **new competitor** to NetHELM's scope?
+   - Does it represent a **new competitor** to NetBrace's scope?
 
 4. Output a structured report:
    ```

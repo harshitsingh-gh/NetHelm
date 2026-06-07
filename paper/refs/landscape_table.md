@@ -1,9 +1,9 @@
-# NetHELM Landscape Table
+# NetBrace Landscape Table
 > Last updated: 2026-06-04
 
 ## Primary benchmarks (import or position against)
 
-| Benchmark | Venue / Year | What it tests | NetHELM relationship | Gap remaining |
+| Benchmark | Venue / Year | What it tests | NetBrace relationship | Gap remaining |
 |---|---|---|---|---|
 | **NetConfBench** (Cui et al., IETF draft-cui-nmrg-llm-benchmark-00) | IRTF NMRG, 2025 | GNS3-based: 40 tasks across routing/QoS/security; 3 metrics: reasoning trace cosine, cmd F1, testcase pass rate; ANI primitives; ReAct/RAG agents | Import task taxonomy; citation only (no code) | No comparative cross-benchmark scoring; single-vendor-per-task; no safety axis |
 | **NetConfEval** (Marouf et al.) | CoNEXT 2024 (KTH + Red Hat) | NL intent → formal spec → Python routing code; 3 steps; Kathará FRR runtime grader | **Primary reproduce target (Week 2)** — import into harness; KTH authors = cold-email target | Routing-policy focused; no config-change impact prediction |

@@ -18,7 +18,7 @@ Repo stats: 0 stars, 1 contributor (Chenguang Du), last commit ~7 months ago.
 No `tasks/`, no grader, no model adapters, no `requirements.txt`, no shell
 script. Nothing to clone-and-run.
 
-### Implication for NetHELM
+### Implication for NetBrace
 
 - Treat NetConfBench as a **taxonomy / scoping reference only** — cite the
   draft for its 40-task categorization and the three proposed metrics, but
@@ -38,13 +38,13 @@ script. Nothing to clone-and-run.
 - No need to file an issue against the draft repo or contact authors — the
   draft is doing what an IETF draft is supposed to do (specify, not ship code).
 
-## What still belongs in NetHELM from the draft
+## What still belongs in NetBrace from the draft
 
 - The 40-task taxonomy as a *checklist of capabilities a config-gen
   benchmark should cover* — useful as a comparator column in
   [../paper/refs/landscape_table.md](../paper/refs/landscape_table.md).
 - The three metric families (syntactic / semantic / functional) as prior
-  art when motivating NetHELM's metric design in paper §3.
+  art when motivating NetBrace's metric design in paper §3.
 
 ## Questions resolved
 
