@@ -7,6 +7,10 @@ name = "netbrace"
 version = "0.0.1"
 description = "NetBrace safety axis — LLM blast-radius prediction benchmark (HotNets 2026)"
 requires-python = ">=3.10"
+# Ranges here stay loose for installability; the REPRODUCIBLE environment is the
+# committed lockfile `requirements-lock.txt` (pip freeze of the canonical venv,
+# audit 2026-06-10 M8) + the pinned Batfish image digest (CLAUDE.md). Artifact
+# reviewers: `pip install -r requirements-lock.txt`.
 dependencies = [
   "pydantic>=2",
   "pyyaml",
@@ -19,6 +23,7 @@ dependencies = [
 oracle = ["pybatfish", "pandas"]
 eval = ["inspect-ai"]
 report = ["matplotlib", "pandas"]
+knowledge = ["sentence-transformers", "faiss-cpu", "requests"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

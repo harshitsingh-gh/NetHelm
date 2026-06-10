@@ -6,7 +6,7 @@ A frank assessment of research velocity. Compares actual progress to the fastest
 - A workshop-ready paper (4–6 pages) needs: novel result + grader + at least 1 model baseline + methodology description
 - Minimum viable: 1 novel task category (safety/blast-radius) + GPT-4o baseline + paper
 - That is achievable in 6–10 weeks of focused work if the lab is up and tools are right
-- We are currently in Week 2 (Jun 4, 2026) with a Sep 20 build deadline — 15 weeks left before CS221
+- The current focus is finishing the blast-radius axis end-to-end, then growing into full NetHELM (see CLAUDE.md)
 
 ## Process
 

@@ -9,8 +9,8 @@ session drops and every destination stays reachable (e.g. it reroutes traffic
 off a mandatory inspection node, halves redundant paths, flips a firewall rule,
 or creates a silent blackhole).
 
-**Output contract** — return EXACTLY ONE ```json block with these keys (use an
-empty list `[]` for any dimension the change does not affect):
+**Output contract** — END your reply with ONE final ```json block with these keys
+(use an empty list `[]` for any dimension the change does not affect):
 
 ```json
 {
@@ -19,10 +19,10 @@ empty list `[]` for any dimension the change does not affect):
   "reachability_lost":  [{"src_node": "<r>", "dst_prefix": "<CIDR>", "vrf": "default"}],
   "waypoint_violations":[{"src_node": "<r>", "dst_prefix": "<CIDR>", "waypoint": "<r>", "vrf": "default"}],
   "redundancy_losses":  [{"node": "<r>", "dst_prefix": "<CIDR>", "before_paths": <int>, "after_paths": <int>}],
-  "filter_deltas":      [{"node": "<r>", "src_ip": "<IP>", "dst_ip": "<IP>", "protocol": "tcp", "dst_port": <int>, "transition": "permit_to_deny|deny_to_permit"}],
   "forwarding_anomalies":[{"node": "<r>", "dst_prefix": "<CIDR>", "kind": "blackhole|null_routed|loop", "vrf": "default"}],
-  "scale_violations":   [{"node": "<r>", "resource": "fib|rib|label|acl_tcam", "limit": <int>, "observed": <int>}],
-  "reasoning": "<free text — your analysis>"
+  "scale_violations":   [{"node": "<r>", "resource": "fib|rib", "limit": <int>, "observed": <int>}],
+  "bgp_withdrawals":    [{"node": "<r>", "network": "<CIDR>", "vrf": "default"}],
+  "intent_violations":  [{"kind": "reachability|waypoint|isolation|redundancy_floor|te_pin", "src": "<r|null>", "dst": "<CIDR|r>"}]
 }
 ```
 
@@ -34,16 +34,50 @@ Dimension definitions:
   (traffic bypasses a required inspection/steering node), even if still reachable.
 - **redundancy_losses** — an (node, prefix) whose number of equal-cost/redundant
   paths decreased (capacity/resilience cut) without losing reachability.
-- **filter_deltas** — a flow whose ACL/filter action flipped. `permit_to_deny` =
-  newly blocked; `deny_to_permit` = newly allowed (segmentation leak).
 - **forwarding_anomalies** — traffic silently dropped (`blackhole` = no route,
   `null_routed`, `loop`), localized to the dropping node.
-- **scale_violations** — a device resource exceeds its limit after the change.
+- **scale_violations** — a device's installed-route count exceeds its `fib`/`rib`
+  budget after the change.
+- **bgp_withdrawals** — a prefix withdrawn from a node's BGP RIB (the advertised
+  route is gone) even if a static/IGP backup keeps it reachable.
+- **intent_violations** — a stated POLICY INTENT that held before the change is
+  broken after it, EVEN WHEN coarse reachability survives. Derive these from the
+  "Intents the network must satisfy" prose: e.g. a traffic-engineering / multihoming
+  more-specific (`te_pin`) is withdrawn so traffic falls back onto a covering
+  aggregate; a mandated transit node (`waypoint`); a required isolation/segmentation
+  (`isolation`); or a minimum redundant-path floor (`redundancy_floor`). Report the
+  intent that no longer holds — a change can keep every destination pingable yet
+  still violate the intent those specifics/paths served.
+
+(Note: an ACL/filter dimension is intentionally out of scope for this version.)
+
+Example of the exact required shape (an empty skeleton — NOT an answer; a change
+with no effect on a dimension keeps that list empty):
+
+```json
+{
+  "sessions_lost": [],
+  "prefixes_lost": [],
+  "reachability_lost": [],
+  "waypoint_violations": [],
+  "redundancy_losses": [],
+  "forwarding_anomalies": [],
+  "scale_violations": [],
+  "bgp_withdrawals": [],
+  "intent_violations": []
+}
+```
+
+Scope: "blast radius" here means the **static, steady-state** difference between the
+pre-change and post-change *converged* network — what the RIB/FIB/forwarding looks
+like after everything settles. Convergence transients (microloops, timing, flap
+dynamics) are out of scope.
 
 Rules:
 - Use only node names / prefixes that appear in the topology or config below.
-- `transition`, `kind`, and `resource` MUST be one of the listed values.
-- Do NOT add any text before or after the ```json block.
+- `kind` and `resource` MUST be one of the listed values.
+- Reason however you like BEFORE the final ```json block, but the LAST fenced
+  json block in your reply must be exactly the contract object — only it is scored.
 
 ---
 
@@ -83,4 +117,4 @@ Watched prefixes (only these matter for prefix/reachability scoring):
 
 **Question:** Across all eight dimensions, what is the blast radius of this change?
 
-Think step by step in the `"reasoning"` field, then fill the other fields precisely.
+Fill every field precisely; use `[]` for any dimension the change does not affect.

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Shortcut: ./kb "your query" [--top N] [--source rfcs|batfish|noc|vendor|papers]
+VENV="$(dirname "$0")/harness/venvs/nethelm/bin/python"
+exec "$VENV" -m knowledge.tools.query "$@"

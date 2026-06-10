@@ -1,28 +1,18 @@
-# NetBrace — Claude Code Context
+# NetHELM — Claude Code Context
 
 ## The objective
 
-**Build and publish NetBrace**: a safety / **blast-radius** benchmark for LLMs and
-AI agents on network-engineering tasks — given a proposed config diff, score
-precision/recall against the set of BGP sessions, prefixes, interfaces, routes,
-waypoints, redundancy, filters, and scale limits that an oracle (Batfish +
-emulation) predicts will be lost or degraded.
+**Build and publish NetHELM**: a holistic benchmark for LLMs and AI agents on
+network-engineering tasks, whose primary novel contribution is a **safety /
+blast-radius axis** — given a proposed config diff, score precision/recall against
+the set of BGP sessions, prefixes, interfaces, routes, waypoints, redundancy,
+filters, and scale limits that an oracle (Batfish + emulation) predicts will be
+lost or degraded.
 
 Target: a citable publication (workshop / HotNets / NAIC@SIGCOMM minimum; arXiv
-preprint + open repo + HF dataset at absolute minimum), with the holistic
+preprint + open repo + HF dataset at absolute minimum), with the full NetHELM
 comparative framing (importing NetConfEval, Cornetto, NIKA, TeleQnA/NetEval) as the
 v2/extension.
-
-### Naming (decided 2026-06-11)
-
-The **v1 paper/benchmark/artifact name is "NetBrace"** — it matches the package +
-CLI and states the thesis (the brace that catches an AI-proposed change before it
-breaks the network). **"NetHELM" is PARKED** as the v2 holistic-umbrella name, to be
-activated later. Why: a one-axis paper named "Holistic…" is a reviewer kill-shot; the
-X-HELM family (MedHELM, …) is an established eval brand and unaffiliated use risks
-alienating that audience; HELM itself has been in maintenance mode since 2026-06-01.
-Do not title paper-bound artifacts "NetHELM"; "NetHELM" below refers only to the v2
-vision.
 
 ### Execution order (decided 2026-06-08)
 
@@ -238,7 +228,7 @@ NetHELM/
 ├── CLAUDE.md                  ← this file
 ├── HANDOFF.md                 ← resume point: what's built/frozen/remaining
 ├── progress.md                ← running log (update as work lands)
-├── netbrace/                  ← the package (= the project/paper name, NetBrace)
+├── netbrace/                  ← the package (legacy name; project = NetHELM)
 │   ├── core/  graders/  batfish/  evals/  tasks/safety/  topology/
 │   ├── models/  reporting/  storage/  routers/  cli.py
 ├── agents/                    ← headless API agents (validity/research) + KB glue

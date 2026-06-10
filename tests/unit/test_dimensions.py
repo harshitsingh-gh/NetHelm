@@ -54,9 +54,12 @@ def test_forwarding_and_scale_keys():
 
 # ----- ExtendedBlastRadius surface -----
 def test_ext_element_types_order():
+    # The original 8 types are preserved as an ordered prefix; D9 bgp_withdrawn then
+    # D10 intent are each appended at the end (additive — no prior index shifts).
     assert EXT_ELEMENT_TYPES == (
         "sessions", "prefixes", "reachability",
         "waypoint", "redundancy", "filter", "forwarding", "scale",
+        "bgp_withdrawn", "intent",
     )
 
 
