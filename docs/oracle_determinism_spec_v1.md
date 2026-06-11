@@ -85,3 +85,69 @@ LIVE-only halves of S05/S17/S19.
 6. EVPN Type-5 (only if class 10 survives the spike).
 
 Sanity gate for every new dim: macro_f1 = 1.0 under the fake-oracle echo before any model runs.
+
+---
+
+## D8 scale-budget grounding — public hardware anchors (added 2026-06-10)
+
+> Pre-approved zero-ground-truth disclosure upgrade (inclusion-debate verdict §5).
+> Retires the "spec budget not silicon ceiling" criticism of the fabricated D8
+> `budget=20` annotations by grounding the *magnitudes* in CITABLE PUBLIC vendor
+> docs. The oracle code and computed ground truth are UNCHANGED — this is a
+> citation + a limitations-paragraph sentence only; the freeze holds.
+
+D8 budgets remain operator-supplied annotations (Batfish counts installed
+routes/next-hop-sets; it does not read silicon tables). What changes is that the
+budget magnitudes we use are now anchored to publicly documented ceilings, so the
+disclosure reads "lab-scaled instance of a real, cited hardware limit" rather than
+"arbitrary number":
+
+- **ECMP-group ceiling:** Cisco 8000 / Silicon One Q200 `stage1_lb_group`
+  **Estimated Max Entries: 16384** (Q100 = 8192), documented verbatim in PUBLIC
+  Cisco Live decks BRKSPG-2208 and TACSPG-2001; the LWLDI→SHLDI→FEC→ECMP_FEC
+  recursive-resolution chain is in BRKSPG-2397. ECMP-group SHARING (multiple
+  prefixes sharing one group resource) is the documented optimization
+  (US Patent 11,431,619, "Hierarchical ECMP control plane for dense topologies").
+- **FIB/route ceiling:** Broadcom Trident-class ~64–72k and Jericho/Qumran
+  external-TCAM ranges (public datasheets / NVIDIA Cumulus + Broadcom public docs).
+- **ECMP exhaustion BEHAVIOR (the blast):** NVIDIA Cumulus documents that once the
+  max ECMP routes are installed, **new ECMP routes log an error and are NOT
+  installed** — i.e. silent FIB-install failure on overflow, the exact D8 blast.
+
+Limitations-paragraph sentence (paper): *"D8 resource budgets are operator-supplied
+annotations whose magnitudes are anchored to publicly documented hardware ceilings
+(e.g. the 16,384-entry ECMP-group table on a current merchant/Silicon-One profile);
+Batfish supplies the deterministic installed count, the ceiling is a cited spec
+value, and instances are lab-scaled — no proprietary deployment figure is used."*
+
+DO NOT use any source-deck-specific numbers (the demand figures, the encap-table
+counts) or the proprietary ASIC table/optimization names — those are fingerprints
+on the kill-list in `temporary/topology_mining_plan_2026-06-10.md` (the ONLY place
+they may appear). Use only the public ceiling magnitudes above, scaled down and
+randomized per instance.
+
+---
+
+## Batfish modeling note — RR next-hop-self (added 2026-06-10, ospf_core6 build)
+
+Plain FRR `neighbor X next-hop-self` is a **no-op for route-reflector-REFLECTED
+routes** — a route reflected to a client keeps the originator's next-hop, not the
+RR's. This is real vendor behavior (NVIDIA Cumulus / Cisco docs) and Batfish mirrors
+it faithfully. To force the RR's own address as the next-hop on reflected routes
+(idiomatic in some designs), use an outbound route-map `set ip next-hop` toward
+clients — Batfish honors that. Relevant for any future RR-based iBGP scenario: do
+NOT assume `next-hop-self` rewrites reflected-route next-hops; verify the resolving
+next-hop's protocol in the PRE snapshot before trusting the ground truth.
+
+## ospf_core6 structural finding (added 2026-06-10) — why a redundant 2-plane RR
+core cannot host a D1=∅ recursive-next-hop blackhole
+
+On a healthy redundant 2-plane RR core, the customer prefix's iBGP next-hop is
+reachable through the SAME underlay paths that carry the victim's iBGP sessions, so a
+single/double OSPF cut either (a) reroutes (prefix survives, dead scenario) or (b)
+strands a node (an iBGP session drops → D1 fires, breaking the trap). Exhaustive
+sweep (42 cuts × 2 next-hop baselines) found 0 clean traps. The idiomatic OSPF
+baseline itself (non-empty RIB, recursive-OSPF resolution, zero statics) is VERIFIED
+and kept (`baseline_ospf_core6.py`) as the v1.5 foundation. The v1.5 fix: separate
+the data-plane next-hop from the session loopback and engineer a single OSPF SPOF on
+a customer-attach path disjoint from the victim's iBGP path.

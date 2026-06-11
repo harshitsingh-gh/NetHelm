@@ -16,6 +16,9 @@ from pathlib import Path
 
 from netbrace.tasks.safety import scenarios
 from netbrace.tasks.safety import generator_ipc as gen
+from netbrace.tasks.safety import generator_leak as genleak
+from netbrace.tasks.safety import generator_lp as genlp
+from netbrace.tasks.safety import generator_scale as genscale
 
 
 def humanize_key(k: str) -> str:
@@ -204,6 +207,82 @@ def gen_sentence(spec) -> str:
             f"novel even though the failure mechanism is publicly documented.")
 
 
+# --- plain-English sentences for the three NEW generator families ---------- #
+def leak_sentence(spec) -> str:
+    scope = {"low_half": "the lower half", "high_half": "the upper half",
+             "both_halves": "both halves"}[spec.leak_scope]
+    if spec.leak_kind == "ms_blackhole":
+        effect = (f"The leaker advertises a more-specific piece ({scope}) of the "
+                  f"victim's address block that it CANNOT actually deliver, so traffic "
+                  f"for those addresses is pulled to the leaker and silently dropped "
+                  f"(a blackhole). Nothing is withdrawn — a route is ADDED — so a "
+                  f"'count what's lost' view sees zero.")
+    else:
+        effect = (f"The leaker advertises a more-specific piece ({scope}) of the "
+                  f"victim's block AND can deliver it — so the traffic still arrives, "
+                  f"but via the wrong network, bypassing the legitimate origin "
+                  f"(a route hijack/impersonation, the AS7007 / Pakistan-YouTube shape). "
+                  f"Everything still pings; only the path/intent is violated.")
+    return (f"A 3-network chain (victim — transit — leaker), eBGP, freshly renumbered "
+            f"per seed. {effect}")
+
+
+def lp_sentence(spec) -> str:
+    knob = {"lp_raise_alt": "raises LOCAL_PREF on the bypass path",
+            "lp_drop_way": "lowers LOCAL_PREF on the inspection path",
+            "prepend_way": "adds AS-path prepending on the inspection path"}[spec.knob]
+    if spec.effect == "bypass":
+        return (f"A source dual-homed to two upstreams — a required inspection path "
+                f"('way') and a bypass ('alt'), all eBGP with no static-route crutch. "
+                f"The change {knob}, flipping the best path OFF the inspection node "
+                f"onto the bypass. Sessions stay up and the destination stays "
+                f"reachable — but the mandatory inspection node is now skipped "
+                f"(a security/compliance regression with no availability symptom).")
+    return (f"Same dual-homed eBGP topology. The change {knob}, BUT applied where it "
+            f"does NOT change the best path — a genuine no-op. The correct answer is "
+            f"'nothing breaks': a calibration trap that catches a model inventing "
+            f"damage that isn't there.")
+
+
+def scale_sentence(spec) -> str:
+    margin = {"over_clear": "comfortably exceeds the device's forwarding-table budget "
+                            "(clear overflow)",
+              "over_marginal": "exceeds the budget by exactly one route (the model must "
+                               "actually COUNT, not guess)",
+              "under": "stays UNDER the budget — no overflow (a trap for models that "
+                       "pattern-match 'de-aggregation = overflow')"}[spec.margin]
+    fate = ("and the covering summary route is ALSO withdrawn (the summary is genuinely lost)"
+            if spec.supernet_fate == "withdrawn"
+            else "while the covering summary stays advertised (reachability is fine; this is "
+                 "pure forwarding-table pressure)")
+    return (f"An upstream–edge eBGP pair, freshly renumbered per seed. Upstream "
+            f"de-aggregates a summary into many more-specific routes so the installed "
+            f"route count {margin}, {fate}. Budget magnitudes are anchored to public "
+            f"hardware ceilings (e.g. the 16,384-entry ECMP-group table), scaled down.")
+
+
+def _gen_block(label, category, what, builder, spec):
+    return {
+        "scenario": f"generated: {label}",
+        "title": f"Auto-generated variant — {category}",
+        "category": category,
+        "what_the_network_is": what,
+        "the_change_made": builder(spec),
+        "what_an_engineer_expects": "A routine, safe-looking change.",
+        "what_actually_happens (live ground truth, in plain English)":
+            "(intended structure as described in 'the_change_made'; verified live "
+            "against Batfish at sweep time — all 60 instances 10×-determinism-gated)",
+        "why_it_matters (real-world grounding)":
+            "Mass-produced with randomized addressing/ASNs so models can't win by "
+            "memorizing a public incident — the contamination-controlled split.",
+        "what_it_tests_about_the_model":
+            "The same mechanism reasoning at scale on never-before-seen numbering.",
+        "how_we_verified_it / caveats":
+            "Generator deterministic per seed; full suite 10×-determinism-gated. Tier A.",
+        "is_it_a_trap": "YES — the safe-looking answer is wrong",
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="paper/refs/scenario_inventory.csv")
@@ -239,20 +318,39 @@ def main() -> None:
             "is_it_a_trap": "YES — the safe-looking answer is wrong" if scn.is_trap else "no",
         })
 
+    # Generator family 1 — Class-1 silent withdrawal (ipc): 96 axis combos.
     for spec in gen.enumerate_specs():
         rows.append({
-            "scenario": f"generated: {spec.dims_label()}",
+            "scenario": f"generated: ipc/{spec.dims_label()}",
             "title": "Auto-generated variant of the 'cleanup filter silently withdraws a prefix' class",
-            "category": "Generated (templated, decontaminated split). One of 96 axis combinations of Class 1.",
+            "category": "Generated — Class 1 (silent withdrawal). One of 96 axis combinations.",
             "what_the_network_is": f"A route reflector with {spec.k} client routers and an origin, freshly renumbered for this instance.",
             "the_change_made": gen_sentence(spec),
             "what_an_engineer_expects": "A routine advertisement cleanup that looks safe.",
-            "what_actually_happens (live ground truth, in plain English)": "(intended structure as described in 'the_change_made'; a representative sample is verified live against Batfish)",
+            "what_actually_happens (live ground truth, in plain English)": "(intended structure as described in 'the_change_made'; verified live against Batfish at sweep time — all 60 instances 10×-determinism-gated)",
             "why_it_matters (real-world grounding)": "Same maintenance trap as the flagship, mass-produced with randomized addressing so models can't win by memorizing a public incident.",
             "what_it_tests_about_the_model": "Same reasoning as the flagship, at scale and on never-before-seen numbering — the core of the contamination-controlled test set.",
-            "how_we_verified_it / caveats": "Generator is deterministic per seed; a stratified sample is oracle-verified; full verification runs at sweep time. Tier A.",
+            "how_we_verified_it / caveats": "Generator is deterministic per seed; full suite oracle-verified + 10×-determinism-gated. Tier A.",
             "is_it_a_trap": "YES — the safe-looking answer is wrong",
         })
+    # Generator family 2 — Class-2 route leak (leak): 6 structural combos.
+    for spec in genleak.enumerate_specs():
+        rows.append(_gen_block(
+            f"leak/{spec.dims_label()}", "Generated — Class 2 (route leak / LPM hijack), 1 of 6 combos",
+            "A 3-network eBGP chain (victim, transit, leaker), freshly renumbered per instance.",
+            leak_sentence, spec))
+    # Generator family 3 — Class-5 attribute path-shift (lp): 6 combos incl. no-op trap.
+    for spec in genlp.enumerate_specs():
+        rows.append(_gen_block(
+            f"lp/{spec.dims_label()}", "Generated — Class 5 (BGP-attribute path-shift), 1 of 6 combos",
+            "A source dual-homed (all-eBGP, no static crutch) to an inspection path and a bypass, renumbered per instance.",
+            lp_sentence, spec))
+    # Generator family 4 — Class-8 de-aggregation overflow (scale): 6 combos.
+    for spec in genscale.enumerate_specs():
+        rows.append(_gen_block(
+            f"scale/{spec.dims_label()}", "Generated — Class 8 (de-aggregation table overflow), 1 of 6 combos",
+            "An upstream-edge eBGP pair with an annotated forwarding-table budget, renumbered per instance.",
+            scale_sentence, spec))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

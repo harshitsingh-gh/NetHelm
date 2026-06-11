@@ -729,3 +729,106 @@ zero provider failures.** Full verdict: `paper/refs/probe_results_2026-06-10.md`
 Next: full sweep (templated multi-mechanism split + Opus 4.8/Sonnet 4.6 arms,
 ~$6-8 more, within caps), then validity package (live-FRR thesis-carriers, κ
 labeler) and the HotNets position-paper write-up around the F3 gradient.
+
+## Day 22 (cont.) — Topology windfall: public-source hunt + v1-inclusion debate + build
+
+User supplied 3 anonymized real-world topologies (internal Cisco xhaul/MEC slides;
+provenance in temporary/ ONLY). Two workflows + a build:
+
+**Public-source hunt (7-angle web sweep, all hits fetch-verified):** NO exact public
+source exists (the specific deployment is unpublished); the role-vocab set, scale
+table, and ASIC spellings (shared_LW_LDI/EM0/EM1) return ZERO public hits =
+confirmed proprietary fingerprints. BUT every STRUCTURAL pattern maps to verified
+citable public anchors (RFC 7938, Juniper 5G CSR xHaul SR JVD, IP Infusion ISIS-SR/
+EVPN blog, IETF seamless-MPLS, RFC 4364§10/9889, US Pat 11,431,619, Cisco Live
+BRKSPG-2208/2397 with the 16,384 ECMP-group ceiling found VERBATIM, CS168 Clos, Jain
+SRLG, Azure RNG/MACSec, Meta/MS optical backbone). The silicon resolved to Cisco
+8000/Silicon One Q200 + NCS5500/Jericho. Verdict: a scaled-down, fingerprint-free,
+public-anchored synthetic version is safe AND citable.
+
+**v1-inclusion debate (6 lenses, unanimous): V1-CASE-STUDY-ONLY.** Build ONE 6-node
+OSPF-underlay topology (ospf_core6), grade it ONCE descriptively as an F3-replication
+case study (NO table/CI/F1 — anything numbered drags the full κ/determinism/live-FRR
+gate past July 16). Reject the 12-node TAP-lite for v1 (4 risk surfaces / 5-week
+clock → v1.5/v2). NetConfEval ruling: the "newer draft" is NetConfBench
+draft-01 (2-node, intent/functional, NO blast-radius) — no scoop, no urgency, no v2
+cannibalization (v2 = task-family breadth, not one IGP topology); it's a velocity +
+citation-currency signal only.
+
+**Executed (free/local, this session):**
+- Citation-currency fixes in landscape_table.md: NetConfBench -00→-01 (2-node,
+  no-blast-radius characterization); NetConfEval pinned to CoNEXT 2024 / ACM ToN
+  10.1145/3656296 (killed the "newer draft" conflation); NIKA/NetArena by arXiv ID.
+- D8 public-budget disclosure appended to oracle_determinism_spec_v1.md (zero GT
+  change): budgets now anchored to the public Cisco 16,384 ECMP-group ceiling +
+  NVIDIA Cumulus exhaustion behavior + Broadcom FIB ranges; retires the
+  "spec budget not silicon ceiling" criticism.
+- Fingerprint kill-list enforced: tree grep (excl. temporary/) CLEAN; scrubbed an
+  accidental term mention from the spec; verified temporary/ stays gitignored.
+- paper/refs/ospf_core6_casestudy.md staged (framing + public anchors + provenance
+  statement; verified-results block GATED on the build).
+- temporary/topology_mining_plan_2026-06-10.md holds the full mining plan +
+  kill-list + public anchors (private).
+
+**In flight:** netdevops-engineer building+Batfish-verifying ospf_core6 with the hard
+kill-switch gate (non-empty OSPF RIB + iBGP next-hop via OSPF not static + D1=∅ with
+D2/D7 + 10× deterministic). PASS → case study ships in v1; FAIL → drop to v1.5,
+disclose static underlay. Deferred to v1.5/v2: TAP-lite, Option-A/VRF, D6-via-IOS-XR
+object-groups + 2nd dialect, SRLG-diversity oracle, ECMP-group graded D8.
+
+## Day 22 (cont.) — ospf_core6 build → CLEAN KILL → dropped to v1.5
+
+The kill-switch worked as designed. netdevops-engineer built the idiomatic 6-node
+OSPF-underlay + iBGP-RR core and verified it on live Batfish:
+- **PASSED (the valuable part):** 12 OSPF adj + 18 iBGP sessions ESTABLISHED; every
+  loopback /32 in every node's OSPF RIB; customer prefix resolves recursively via
+  OSPF (next-hop=edge2 loopback, resolved-by=['ospf'], ZERO `ip route` lines).
+  **The static-next-hop crutch is killed at the design level** — retires audit-M1.
+- **KILLED (the scenario):** the intended D1=∅ recursive-next-hop blackhole is
+  STRUCTURALLY IMPOSSIBLE on a redundant 2-plane RR core (exhaustive: 42 cuts × 2
+  next-hop baselines = 0 clean traps; cuts either reroute or fire D1). Agent dropped
+  cleanly per the verdict rather than hack a result — no scenario/test/REGISTRY
+  entry created; only the verified baseline kept.
+
+**v1 consequence:** NO topology case study in v1; static underlay disclosed as a
+limitation. **v1.5:** baseline_ospf_core6.py kept as the foundation; fix spec
+recorded (separate data-plane next-hop from session loopback + engineer a customer-
+attach SPOF disjoint from the victim's iBGP). Suite 596 green (unchanged — no
+half-built scenario registered).
+
+**KB findings recorded (docs/oracle_determinism_spec_v1.md):** (1) plain FRR
+next-hop-self is a no-op for RR-reflected routes (Batfish-faithful; use route-map
+`set ip next-hop`); (2) the 2-plane-core structural finding.
+
+Net: the topology windfall produced, for v1, the citation-currency fixes + the D8
+public-budget grounding + the verified crutch-killer baseline + 2 KB findings — all
+free, all clean, none on the deadline path. The graded topology scenario is honestly
+v1.5. The binding next action is unchanged: the full sweep.
+
+## Day 23 — 2026-06-11 — FULL SWEEP COMPLETE (v1 main result)
+
+Staged 3-run sweep within the hard $10/provider cap; consolidated in
+paper/refs/full_sweep_results_2026-06-11.md. NO overspend (Anthropic $9.28, OpenAI
+$9.41, Google $4.13 today). 60/60 instances 10×-determinism-gated first.
+- Run A (both splits, N=5, n=48): haiku-4.5 + gpt-5.4-mini = the templated validity
+  backbone. $4.50.
+- Run B+C (grounded, N=5): sonnet-4-6 + gemini + opus-4-8 + gpt-5.5. $12.62; gemini
+  hit transient 503s (38/55, guard fail-skipped — NOT a cap), topped up on Google
+  headroom to N=5.
+
+**RESULTS (6 models × 2 splits × N=5, ~700 samples):**
+- **F3 headline now bulletproof:** forwarding-anomaly F1 = 0.00 for EVERY model on
+  BOTH grounded and templated splits — universal second-order blindness. Templated
+  adds waypoint=0.00 + redundancy=0.00. First-order prefixes read well (0.60-0.83).
+- **F2:** FSA = 0.00 across all 6 models, both splits — no hallucinated session loss.
+- **F1/validity (K1 resolved):** on templated damage instances, models 0.11-0.15 beat
+  the modal-by-class memorizer floor (0.00) and all floors (≤0.07). Benchmark
+  measures reasoning, not memorization — proven with real data.
+- **F4 (NEW, circularity defense):** opus 0.37 ≈ gpt-5.5 0.36 ≈ gemini 0.35 — the
+  Claude-built benchmark does NOT favor Claude; cross-vendor frontier parity.
+- Caveats logged: gemini top-up; sonnet invalid 0.11 (raw saved); grounded per-dim
+  n=1 cells are point estimates (templated carries the real N for fwd/D4/D5).
+
+v1 experimental payload is DONE. Remaining for the paper: κ validity study (needs the
+independent human/co-author — the gated $100-300 scale-up waits on it), prose draft,
+figures, arXiv. Landscape citation currency + D8 public-budget grounding already done.
