@@ -378,7 +378,13 @@ def _call_gemini(model: str, scn, temperature: float,
     from google.genai import types as gtypes
 
     model_id = MODEL_REGISTRY[model]["id"]
-    client = genai.Client(api_key=key)
+    # Per-request timeout (ms) so a wedged socket can't hang the whole sweep. The
+    # other providers set timeout+max_retries on their clients; the Gemini path had
+    # NO timeout, so a stalled first call blocked a 2 h run on 2026-06-11 (the SDK
+    # never raised, so _retrying's backoff never fired). 120 s is generous for a
+    # thinking model; on timeout the SDK raises -> _retrying retries -> then SKIP.
+    client = genai.Client(api_key=key,
+                          http_options=gtypes.HttpOptions(timeout=120_000))
     # Freeze gate 2026-06-10: Gemini 3.5 thinks by default and the thinking tokens
     # count against max_output_tokens (default 8192) — a tight cap truncates the
     # visible answer (finishReason MAX_TOKENS -> invalid -> scored 0). 16000 gives
@@ -438,10 +444,14 @@ def run_sweep(args) -> dict:
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_dir = Path(f"runs/sweep_{ts}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    results_fh = (out_dir / "results.jsonl").open("w", encoding="utf-8")
+    # buffering=1 -> line-buffered: every record (each ends in "\n") is flushed to
+    # disk immediately. Without this the handles are block-buffered (~8 KB), so a
+    # crash/kill loses all completed-but-unflushed samples — the exact failure that
+    # left a 2 h run with 0-byte outputs on 2026-06-11. Paid work must survive a crash.
+    results_fh = (out_dir / "results.jsonl").open("w", buffering=1, encoding="utf-8")
     # Verbatim model outputs (real models only) — required so invalid/odd outputs
     # are auditable after the run (audit 2026-06-10 M6).
-    responses_fh = (out_dir / "responses.jsonl").open("w", encoding="utf-8")
+    responses_fh = (out_dir / "responses.jsonl").open("w", buffering=1, encoding="utf-8")
 
     # 1) compute ground truth once per instance (shared across models + baselines).
     # Flake-retried + lightly determinism-checked per instance; persistent failures

@@ -5,8 +5,12 @@
 > Batfish-computed on the pinned digest (09817554db90), 60/60 instances ≥10×
 > determinism-gated before any paid call. No LLM-as-judge: grading is deterministic
 > set math (graders/extended.py). Runs: sweep_20260610_213843 (Run A, both splits,
-> haiku+mini), sweep_20260611_000024 (Run B+C, grounded, sonnet+gemini+opus+gpt-5.5),
-> sweep_20260611_00* (gemini top-up).
+> haiku+mini), sweep_20260611_000024 (Run B+C, grounded, sonnet+gemini+opus+gpt-5.5).
+> Gemini's clean N=5 is pooled from the post-freeze runs (000024 + 065948 + 100408)
+> by scripts/build_clean_gemini.py — Gemini's API returns transient 503s so no single
+> run lands 55/55, but the union does; identical frozen prompt (commit a317f3d), so
+> the draws are i.i.d. samples of one condition. Only Gemini is pooled, and only for
+> provider outages; the pre-freeze run (031628) is excluded.
 
 ## Spend ledger (today, against the funded $10/provider — NO overspend)
 
@@ -14,9 +18,9 @@
 |---|---|---|---|
 | Anthropic | $9.28 | $10 | haiku, sonnet, opus — all complete N=5 |
 | OpenAI | $9.41 | $10 | gpt-5.4-mini, gpt-5.5 — all complete N=5 |
-| Google | $4.13 (+top-up) | $10 | gemini — 38/55 then topped up to N=5 |
+| Google | $7.17 | $10 | gemini — clean N=5 pooled from 3 post-freeze runs (503 flakiness) |
 
-Total v1 sweep ≈ $23 (vs the old "$100-300" envelope — small because single-shot,
+Total v1 sweep ≈ $26 (vs the old "$100-300" envelope — small because single-shot,
 no agentic rollouts, lean tiered design). The $100-300 scale-up remains GATED on
 coworker/co-author scenario validation + κ (per feedback_spend_gate).
 
@@ -26,7 +30,7 @@ coworker/co-author scenario validation + κ (per feedback_spend_gate).
 |---|---|---|---|---|
 | openai/gpt-5.5 | 0.36±0.27 | **0.00** | 0.00 | 0.00 |
 | anthropic/claude-opus-4-8 | 0.37±0.27 | **0.00** | 0.00 | 0.00 |
-| gemini/gemini-3.5-flash | 0.35±0.29 | **0.00** | 0.00 | 0.00 |
+| gemini/gemini-3.5-flash | 0.36±0.28 | **0.00** | 0.00 | 0.00 |
 | anthropic/claude-sonnet-4-6 | 0.27±0.18 | **0.00** | 0.00 | 0.11 |
 | anthropic/claude-haiku-4-5 | 0.29±0.17 | **0.00** | 0.00 | 0.00 |
 | openai/gpt-5.4-mini | 0.22±0.22 | **0.00** | 0.00 | 0.00 |
@@ -64,15 +68,21 @@ the silent blackhole it implies — is the paper.
 
 **F4 (NEW — circularity defense lands).** The benchmark was built/red-teamed by Claude
 models, so self-preference was a live concern. Result: opus-4-8 (0.37) ≈ gpt-5.5
-(0.36) ≈ gemini-3.5-flash (0.35) — the Anthropic frontier does NOT out-score the
+(0.36) ≈ gemini-3.5-flash (0.36) — the Anthropic frontier does NOT out-score the
 non-Anthropic frontier. No Claude self-preference; the cross-vendor parity neutralizes
 the circularity charge directly.
 
 ## Honest caveats (carry into the paper)
 
-- **gemini** initially completed 38/55 (transient Gemini 503 "high demand", not a
-  cap — Google had headroom); topped up to N=5 in a follow-up run. Story unchanged
-  (fwd 0.00, FSA 0.00 throughout).
+- **gemini** clean N=5 is POOLED across three post-freeze runs (000024 + 065948 +
+  100408) by scripts/build_clean_gemini.py: Gemini's API returns transient 503 "high
+  demand" on a fraction of calls, so no single run lands a clean 55/55 — but the union
+  does (≥5 valid draws on every instance; 5 selected deterministically per instance).
+  Pooling is valid because all three runs post-date the prompt freeze (commit a317f3d),
+  so the draws are i.i.d. samples of one condition; only Gemini is pooled, and only for
+  provider outages. Pre-freeze run 031628 excluded. Story unchanged across the partial
+  and pooled estimates (macro 0.35→0.357, fwd 0.00, FSA 0.00 throughout) — the extra
+  samples converged on the same number, confirming the partial was unbiased.
 - **sonnet invalid_rate 0.11** (~6/55 unparseable outputs) — reported separately so
   format-failure is never conflated with reasoning-failure; raw text saved in
   responses.jsonl for audit. Other models 0.00.
