@@ -38,7 +38,7 @@ scored by deterministic, semantics-aware set comparison---no LLM judge. We
 evaluate eight models from five vendors---six proprietary and two
 open-weight reasoning models---on \netbrace{}, a benchmark of 11
 incident-grounded scenarios and 48 generator-produced instances with
-randomized identifiers: 1{,}070 graded samples ($N{=}5$ per instance). The
+randomized identifiers: 1{,}100 graded samples ($N{=}5$ per instance). The
 measured capability split is sharp and runs along an operationally
 meaningful line. Models read the \emph{loud} half of the blast radius well:
 five of the eight identify both grounded blackholes---the explicit
@@ -63,7 +63,7 @@ signature: it removes or blackholes something they can name---a withdrawn
 route, a vanished management prefix, a blackholed destination, which the
 stronger models catch at F1 1.00 where each is the ground truth (the two
 cheapest lower, 0.00--0.80, with GPT-5.4-mini missing the lockout entirely).
-No model ever raises a false session-loss alarm (0/1{,}070). The most expensive real outages of the last decade---leak-induced
+No model ever raises a false session-loss alarm (0/1{,}100). The most expensive real outages of the last decade---leak-induced
 silent reroutes among them---live in the quiet half. We additionally show
 that naive exact-string set grading would have reported a uniform 0.00 on
 forwarding anomalies for every model---a granularity artifact, not a
@@ -137,7 +137,7 @@ pitfall we expect generalizes to other verifier-graded benchmarks.
 \paragraph{3. Measurement: the quiet half of the blast radius is the blind
 spot.} Across eight models from five vendors (GPT-5.5, GPT-5.4-mini, Claude
 Opus 4.8, Sonnet 4.6, Haiku 4.5, Gemini 3.5 Flash, and the open-weight
-DeepSeek v4-pro and Kimi k2.6; $N{=}5$ samples per instance; 1{,}070 graded
+DeepSeek v4-pro and Kimi k2.6; $N{=}5$ samples per instance; 1{,}100 graded
 samples), capability splits along the loud/quiet line, not the
 first-order/second-order line we expected. Loud damage is read well: five of
 the eight models---including both open-weight reasoners---identify both
@@ -412,9 +412,9 @@ full-fleet templated run is gated on the in-progress human-expert validation
 study. The six-instance silent-reroute class (F3) was run on \emph{all eight
 models}: Haiku and mini cover it inside the templated split, and the other six
 (Opus 4.8, Sonnet 4.6, GPT-5.5, Gemini 3.5 Flash, DeepSeek v4-pro, Kimi k2.6)
-ran it as an extension on the identical six reroute instances ($5 \times 6
-\times 5 = 150$ samples complete as of this draft; the Kimi reroute run is
-finishing), for \textbf{1{,}070 graded samples} to date. Both the prompt contract and the
+ran it as a $6 \times 6 \times 5 = 180$-sample extension on the identical six
+reroute instances, so every model is measured on the same six, for
+\textbf{1{,}100 graded samples} in total. Both the prompt contract and the
 floor definitions were frozen before any paid call. The semantic-grader
 matching rules (\S\ref{sec:grading}) were motivated by the exact-string
 results and a raw-output audit (which showed models naming the node, kind,
@@ -553,7 +553,7 @@ modal-by-class memorizer scores \textbf{0.00} and the best other floor
 saturated, and performance is not explained by template recall.
 
 \paragraph{F2: Models do not cry wolf on sessions.} The false-session-alarm
-rate is 0.00 for every model on every split it was evaluated on---all 1{,}070
+rate is 0.00 for every model on every split it was evaluated on---all 1{,}100
 samples. The widely-assumed failure mode---hallucinating session losses on
 any BGP-adjacent change---did not occur once, while the metric itself is
 demonstrably sensitive (the strawman floor trips it at 1.00). Models do,
@@ -601,11 +601,12 @@ never spells out. Its sharpest case is the leak-induced silent reroute, and
 it \emph{separates the fleet} (Table~\ref{tab:reroute}). On the six reroute
 instances---where a more-specific leak \emph{elsewhere} pulls a victim's
 traffic past its mandated waypoint while the route still resolves and every
-destination stays reachable---most models score zero on \emph{both} the
+destination stays reachable---six of the eight score zero on \emph{both} the
 waypoint and intent dimensions on the majority of samples: GPT-5.4-mini and
-Gemini 3.5 Flash on all 30, Haiku 4.5 on 27/30, Opus 4.8 on 21/30, and
-Sonnet 4.6 on 18/30---and Opus and Gemini do this \emph{despite} topping the
-loud half (their D7/D9/D10 are at or near 1.00). Only two models register it at
+Gemini 3.5 Flash on all 30, Haiku 4.5 on 27/30, Opus 4.8 on 21/30, Sonnet
+4.6 on 18/30, and Kimi k2.6 on 17/30---several \emph{despite} topping the
+loud half (Opus, Gemini, and Kimi all post grounded macros of 0.49--0.51,
+their D7/D9/D10 at or near 1.00, yet miss the reroute). Only two models register it at
 all: GPT-5.5 escapes total blindness on 29 of 30 samples (waypoint F1 0.64),
 and the open-weight DeepSeek v4-pro on 20 of 30 (0.56)---and even these reads
 are mostly of the waypoint \emph{element}; the paired traffic-pinning
@@ -651,9 +652,9 @@ Model & (total miss) & credited & credited & F1 \\
 \midrule
 GPT-5.5                     & 1/30  & 29/30 & 19/30 & 0.64 \\
 DeepSeek v4-pro \emph{(ow)} & 10/30 & 20/30 & 7/30  & 0.56 \\
+Kimi k2.6 \emph{(ow)}       & 17/30 & 13/30 & 0/30  & 0.31 \\
 Claude Sonnet 4.6           & 18/30 & 11/30 & 11/30 & 0.30 \\
 Claude Opus 4.8             & 21/30 & 8/30  & 4/30  & 0.26 \\
-Kimi k2.6 \emph{(ow)}       & \multicolumn{4}{c}{\textit{reroute run completing as of this draft}} \\
 Claude Haiku 4.5            & 27/30 & 3/30  & 1/30  & 0.10 \\
 GPT-5.4-mini                & 30/30 & 0/30  & 0/30  & 0.00 \\
 Gemini 3.5 Flash            & 30/30 & 0/30  & 0/30  & 0.00 \\
@@ -665,7 +666,10 @@ waypoint (D4) and intent (D10) dimensions (total blindness); ``credited'' $=$
 samples with nonzero F1 on that dimension. Two models clear the field
 (GPT-5.5 and the open-weight DeepSeek), statistically tied at the top (paired
 $t{=}1.3$, $n{=}6$ instances, n.s.) and well above the rest; the loud-half
-leaders Opus 4.8 and Gemini 3.5 Flash miss it. Even the leaders credit the
+leaders Opus 4.8 and Gemini 3.5 Flash miss it. The two open-weight models
+\emph{diverge}---DeepSeek clears it, Kimi (despite tying for second on the
+grounded macro) misses it like the rest---so the capability is model-specific,
+not an open/closed split. Even the leaders credit the
 traffic-pinning \emph{intent} key far less often than the waypoint element,
 so no model reads the full reroute. Under exact-string matching every model
 scores both-zero on all 30 (granularity artifact, \S\ref{sec:graderfinding});
