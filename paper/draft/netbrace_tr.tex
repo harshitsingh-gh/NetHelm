@@ -35,27 +35,35 @@ forwarding anomalies, resource exhaustion, control-plane withdrawals, and
 intent violations. Ground truth is computed by the Batfish network verifier
 on a digest-pinned, determinism-gated snapshot pair, and predictions are
 scored by deterministic, semantics-aware set comparison---no LLM judge. We
-evaluate six frontier and mid-tier models from three vendors on \netbrace{},
-a benchmark of 11 incident-grounded scenarios and 48 generator-produced
-instances with randomized identifiers: 810 graded samples ($N{=}5$ per
-instance). The measured capability split is sharp and runs along an
-operationally meaningful line. Models read the \emph{loud} half of the blast
-radius well: frontier models identify both grounded blackholes---the
-explicit leak-discard and the second-order partial-ECMP one---in every
-sample (10/10 each) and read first-order prefix loss at F1
-0.73--0.83. The \emph{quiet} half---damage that removes no nameable object
-and leaves reachability intact---goes largely unseen: a leak-induced
-silent reroute that pushes a victim's traffic off its mandated inspection
-waypoint, while every route still resolves and every session stays up,
-scores zero on both the waypoint and intent dimensions on 96 of 120 samples
-across the four models run on it---including both Anthropic frontier models
-(Opus 4.8 misses both on 21 of 30, despite reading the loud half perfectly).
-The damage models \emph{do} catch shares a
+evaluate eight models from five vendors---six proprietary and two
+open-weight reasoning models---on \netbrace{}, a benchmark of 11
+incident-grounded scenarios and 48 generator-produced instances with
+randomized identifiers: 1{,}070 graded samples ($N{=}5$ per instance). The
+measured capability split is sharp and runs along an operationally
+meaningful line. Models read the \emph{loud} half of the blast radius well:
+five of the eight identify both grounded blackholes---the explicit
+leak-discard and the second-order partial-ECMP one---in every sample (10/10),
+a sixth (Sonnet 4.6) at F1 0.97, and they read first-order prefix loss at F1
+0.67--0.83. The \emph{quiet} half---damage that removes no nameable object and
+leaves reachability intact---\emph{separates the fleet}: a leak-induced silent
+reroute that pushes a victim's traffic off its mandated waypoint, while every
+route still resolves and every session stays up, is missed outright by most
+models---scoring zero on both the waypoint and intent dimensions on a
+majority of samples, including the loud-half leaders Opus 4.8 (21 of 30) and
+Gemini 3.5 Flash (all 30). Only two clear it: GPT-5.5 (misses both on 1 of
+30; waypoint F1 0.64) and the open-weight DeepSeek v4-pro (10 of 30; 0.56),
+statistically tied at the top and well above the rest. An open-weight reasoner
+standing among the two leaders---ahead of every Anthropic and Google model
+evaluated---indicates the gap is a reasoning trait, not a closed-model or
+grader-circularity artifact; the differentiation is itself grader-dependent
+(under naive exact-string matching every model misses all 30, the same
+granularity artifact we report for forwarding anomalies). The damage models
+\emph{do} catch shares a
 signature: it removes or blackholes something they can name---a withdrawn
 route, a vanished management prefix, a blackholed destination, which the
 stronger models catch at F1 1.00 where each is the ground truth (the two
-cheapest, 0.60--0.80). No model ever raises a false session-loss alarm
-(0/810). The most expensive real outages of the last decade---leak-induced
+cheapest lower, 0.00--0.80, with GPT-5.4-mini missing the lockout entirely).
+No model ever raises a false session-loss alarm (0/1{,}070). The most expensive real outages of the last decade---leak-induced
 silent reroutes among them---live in the quiet half. We additionally show
 that naive exact-string set grading would have reported a uniform 0.00 on
 forwarding anomalies for every model---a granularity artifact, not a
@@ -127,31 +135,37 @@ forwarding-anomaly dimension for every model
 pitfall we expect generalizes to other verifier-graded benchmarks.
 
 \paragraph{3. Measurement: the quiet half of the blast radius is the blind
-spot.} Across six models from three vendors (GPT-5.5, Claude Opus 4.8,
-Gemini 3.5 Flash, Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.4-mini;
-$N{=}5$ samples per instance; 810 graded samples), capability splits along
-the loud/quiet line, not the first-order/second-order line we expected.
-Loud damage is read well: every frontier model identifies both grounded
-blackholes---including the second-order, partial-ECMP one---on every sample,
-first-order prefix loss is read at F1 0.73--0.83, and damage that
+spot.} Across eight models from five vendors (GPT-5.5, GPT-5.4-mini, Claude
+Opus 4.8, Sonnet 4.6, Haiku 4.5, Gemini 3.5 Flash, and the open-weight
+DeepSeek v4-pro and Kimi k2.6; $N{=}5$ samples per instance; 1{,}070 graded
+samples), capability splits along the loud/quiet line, not the
+first-order/second-order line we expected. Loud damage is read well: five of
+the eight models---including both open-weight reasoners---identify both
+grounded blackholes (including the second-order, partial-ECMP one) on every
+sample, a sixth (Sonnet 4.6) at D7 F1 0.97, first-order prefix loss is read
+at F1 0.67--0.83, and damage that
 \emph{removes} a nameable object---a withdrawn route, a vanished management
 prefix, a dropped ECMP path---is caught at F1 1.00 (stronger models;
-0.60--0.80 for the cheapest) where it is the ground truth. Quiet
+0.00--0.80 for the cheapest, mini missing the lockout) where it is the ground
+truth. Quiet
 damage---where reachability survives and nothing the diff directly changes
-looks broken---is largely missed: traffic rerouted past a
-mandated waypoint by a leak \emph{elsewhere}, with every route still
-resolving, scores zero on both the waypoint and intent dimensions on 96/120
-samples across the four models run on it, both Anthropic frontier models
-included (Opus 4.8 misses both on 21/30 despite F1 1.00 on the loud
-half)---as does the traffic-pinning intent a surviving covering aggregate
-hides even as the pinned specifics are dropped (\S\ref{sec:results}). The split is not first- vs.\
-second-order (the Clos blackhole is second-order and caught); it is whether
-the damage leaves a trace. The errors are one-sided: the
-false-session-alarm rate is 0.00 across all 810 samples. Model-free floors
-(empty, naive, syntactic-diff, and a per-class memorizer) score $\leq$0.02
-grounded and $\leq$0.08 templated, confirming the benchmark measures
-reasoning headroom rather than template recall, and the cross-vendor
-frontier lands within noise of itself, ruling out grader circularity.
+looks broken---\emph{separates the fleet}: traffic rerouted past a mandated
+waypoint by a leak \emph{elsewhere}, with every route still resolving, is
+missed by most models (Opus 4.8 scores zero on both the waypoint and intent
+dimensions on 21/30 and Gemini 3.5 Flash on all 30---both despite F1 1.00 on
+the loud half) and cleared only by two models (GPT-5.5 misses
+1/30, the open-weight DeepSeek v4-pro 10/30)---as is the traffic-pinning
+intent a surviving covering aggregate hides even as the pinned specifics are
+dropped (\S\ref{sec:results}). The split is not first- vs.\ second-order
+(the Clos blackhole is second-order and caught); it is whether the damage
+leaves a trace. The errors are one-sided: the false-session-alarm rate is
+0.00 across all samples. Model-free floors (empty, naive, syntactic-diff,
+and a per-class memorizer) score $\leq$0.02 grounded and $\leq$0.08
+templated, confirming the benchmark measures reasoning headroom rather than
+template recall; and reading the silent reroute is shared by one proprietary
+and one open-weight model (GPT-5.5 and DeepSeek), the open one ahead of every
+Anthropic and Google model, ruling out a closed-model or Claude-family grader
+artifact on exactly the capability the benchmark most sharply discriminates.
 
 We argue this split---competent at damage that announces itself in the
 routing table, blind to damage that hides behind preserved
@@ -369,29 +383,38 @@ leaves every floor at chance (\S\ref{sec:results}).
 \section{Experimental Setup}
 \label{sec:setup}
 
-\paragraph{Models.} Six models from three vendors, pinned IDs as served in
+\paragraph{Models.} Eight models from five vendors, pinned IDs as served in
 June 2026: GPT-5.5 and GPT-5.4-mini (OpenAI), Claude Opus 4.8, Sonnet 4.6,
-and Haiku 4.5 (Anthropic), and Gemini 3.5 Flash (Google). GPT-5.5 and
+and Haiku 4.5 (Anthropic), Gemini 3.5 Flash (Google), and two open-weight
+reasoning models---DeepSeek v4-pro (DeepSeek) and Kimi k2.6 (Moonshot AI),
+served through their hosted OpenAI-compatible APIs. GPT-5.5 and
 GPT-5.4-mini run with reasoning enabled and accept no sampling parameters;
-Opus 4.8 has removed them; all three are sent no temperature. Haiku 4.5 and
-Sonnet 4.6 sample at temperature 0.7; Gemini 3.5 Flash is sent no
-temperature (API default). Gemini 3.5 Flash is Google's fast tier (the 3.5
+Opus 4.8 has removed them; all are sent no temperature except Haiku 4.5 and
+Sonnet 4.6 (temperature 0.7) and Gemini 3.5 Flash (API default). DeepSeek and
+Kimi are reasoning models whose hidden chain-of-thought is streamed and
+discarded; the open-weight pair is run with streaming and a generous
+output-token budget (up to 128k, Moonshot's documented reasoning-benchmark
+recommendation) so a long chain-of-thought is never truncated before the final
+answer---which is short in practice (under 1k tokens)---and both returned zero
+invalid grounded samples.
+Gemini 3.5 Flash is Google's fast tier (the 3.5
 Pro tier was not generally available on the API at sweep time); its scores
 land within noise of Opus 4.8 and GPT-5.5, so we group it with the frontier
 set. Single-shot prompting under one frozen prompt contract (frozen, with a
 leak-lint pass, before any paid call; the contract requires one JSON object
 with one key per dimension).
 
-\paragraph{Protocol.} $N{=}5$ samples per (instance, model). All six models
-ran the grounded split ($6 \times 11 \times 5 = 330$ samples); the templated
+\paragraph{Protocol.} $N{=}5$ samples per (instance, model). All eight models
+ran the grounded split ($8 \times 11 \times 5 = 440$ samples); the templated
 split was run on Haiku 4.5 and GPT-5.4-mini ($2 \times 48 \times 5 = 480$
-samples) under the study's fixed per-provider cost cap, for \textbf{810
-graded samples} in total---the full-fleet templated run is gated on the
-in-progress human-expert validation study. To test the headline silent-reroute
-finding beyond the two templated-split models, the six-instance reroute class
-was additionally run on Opus 4.8 and Sonnet 4.6 ($2 \times 6 \times 5 = 60$
-samples; GPT-5.5 and Gemini were not available for this extension), reported
-in F3. Both the prompt contract and the
+samples) under the study's fixed per-provider cost cap---the
+full-fleet templated run is gated on the in-progress human-expert validation
+study. The six-instance silent-reroute class (F3) was run on \emph{all eight
+models}: Haiku and mini cover it inside the templated split, and the other six
+(Opus 4.8, Sonnet 4.6, GPT-5.5, Gemini 3.5 Flash, DeepSeek v4-pro, Kimi k2.6)
+ran it as an extension on the identical six reroute instances ($5 \times 6
+\times 5 = 150$ samples complete as of this draft; the Kimi reroute run is
+finishing), for \textbf{1{,}070 graded samples} to date. Both the prompt contract and the
 floor definitions were frozen before any paid call. The semantic-grader
 matching rules (\S\ref{sec:grading}) were motivated by the exact-string
 results and a raw-output audit (which showed models naming the node, kind,
@@ -410,12 +433,15 @@ dominated by between-instance spread, not within-instance sample noise
 0.06--0.17 across instances), so it changes by $<$0.001 for any $N>5$;
 statistical power is therefore invested in instance count, not samples.
 Headline damage-detection macros
-exclude the empty-truth calibration instances (an empty predictor passes
-those for free); those instances are scored and reported separately via the
-false-alarm channel. Total model spend for the study was approximately
-\$32, including a \$3 re-run of the Sonnet grounded split and a \$3
-four-model reroute extension, both at the higher token cap (Disclosure ii;
-\S\ref{sec:results}). The oracle container digest is pinned
+exclude empty-truth calibration instances (an empty predictor passes those
+for free); the grounded split has no such instances (all 11 carry damage, so
+its damage-macro equals its full macro), and the calibration traps live in
+the templated split, scored and reported separately via the false-alarm
+channel. Total model spend for the study was approximately
+\$45, including the Sonnet grounded re-run, the two open-weight models
+(grounded and reroute), and the cross-vendor silent-reroute extension, all at
+the higher token cap (Disclosure ii; \S\ref{sec:results}); per-call costs are
+logged in every run manifest. The oracle container digest is pinned
 (\texttt{09817554db90\ldots}) and recorded with every run manifest.
 
 \paragraph{Disclosures.} (i) Gemini's API returned transient 503 errors on a
@@ -436,7 +462,13 @@ no other model approached the cap. (iii) One registry scenario (a static-route
 blackhole) was excluded from the paid sweep by a pre-registration audit that
 judged its topology contrived; it is an explicitly induced discard of the kind
 every frontier model detects reliably, so including it would have \emph{raised}
-model scores on D7.
+model scores on D7. (iv) Kimi k2.6's first grounded run hit a
+streaming/token-budget wedge that left 19 of 38 samples with empty output; we
+re-ran its grounded split with streaming at the open-weight token budget,
+yielding the zero-invalid set we report. Gemini's reroute set is likewise a
+clean re-run (an earlier partial had two API-error invalids); both re-runs use
+the identical frozen prompt and pinned model ID, and Gemini scores 0.00 on the
+reroute either way.
 
 \section{Results}
 \label{sec:results}
@@ -448,22 +480,26 @@ model scores on D7.
  & macro-F1 & blackhole & withdrawal & lockout & false sess. & invalid \\
 Model & (damage) & (D7$^{\dagger}$) & (D9$^{\ddagger}$) & (D10$^{\ddagger}$) & alarm & \\
 \midrule
-Claude Opus 4.8    & 0.51$\pm$0.17 & \textbf{1.00} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
-Gemini 3.5 Flash   & 0.49$\pm$0.18 & \textbf{1.00} & \textbf{1.00} & 0.20 & 0.00 & 0.00 \\
-GPT-5.5            & 0.48$\pm$0.17 & \textbf{1.00} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
-Claude Sonnet 4.6  & 0.42$\pm$0.06 & \textbf{0.97} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
-Claude Haiku 4.5   & 0.39$\pm$0.10 & 0.57          & 0.80 & 0.76 & 0.00 & 0.00 \\
-GPT-5.4-mini       & 0.27$\pm$0.21 & 0.17          & 0.60 & 0.00 & 0.00 & 0.00 \\
+Claude Opus 4.8       & 0.51$\pm$0.17 & \textbf{1.00} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
+Kimi k2.6 \emph{(ow)} & 0.49$\pm$0.12 & \textbf{1.00} & \textbf{1.00} & 0.80          & 0.00 & 0.00 \\
+Gemini 3.5 Flash      & 0.49$\pm$0.18 & \textbf{1.00} & \textbf{1.00} & 0.20          & 0.00 & 0.00 \\
+GPT-5.5               & 0.48$\pm$0.17 & \textbf{1.00} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
+DeepSeek v4-pro \emph{(ow)} & 0.44$\pm$0.08 & \textbf{1.00} & \textbf{1.00} & 0.80    & 0.00 & 0.00 \\
+Claude Sonnet 4.6     & 0.42$\pm$0.06 & \textbf{0.97} & \textbf{1.00} & \textbf{1.00} & 0.00 & 0.00 \\
+Claude Haiku 4.5      & 0.39$\pm$0.10 & 0.57          & 0.80          & 0.76          & 0.00 & 0.00 \\
+GPT-5.4-mini          & 0.27$\pm$0.21 & 0.17          & 0.60          & 0.00          & 0.00 & 0.00 \\
 \midrule
-floors (best of 5) & $\leq$0.02    & 0.00          & 0.00 & 0.00 & 1.00$^{*}$ & --- \\
+floors (best of 5)    & $\leq$0.02    & 0.00          & 0.00          & 0.00 & 1.00$^{*}$ & --- \\
 \bottomrule
 \end{tabular}
-\caption{Grounded split (11 scenarios, $N{=}5$, semantic grader). All three
+\caption{Grounded split (11 scenarios, $N{=}5$, semantic grader); eight models
+across five vendors, \emph{(ow)}~$=$~open-weight. All three
 columns are \emph{F1 on the instance(s) where the dimension is the ground
 truth} (recall is at least as high)---the loud half, which models read well.
 $^{\dagger}$Mean D7 F1 over the two anomaly-truth instances (\emph{leak\_ms},
-\emph{clos\_summary}); four of six read both blackholes at $\geq$0.97, the
-two cheapest miss the implicit Clos one.
+\emph{clos\_summary}); six of eight---including both open-weight
+models---read both blackholes at $\geq$0.97, the two cheapest miss the
+implicit Clos one.
 $^{\ddagger}$F1 on the single grounded instance where the dimension is the
 truth: the masked control-plane withdrawal (\emph{ipc3\_static}, D9) and the
 management-plane lockout (\emph{mgmt\_lockout}, D10). The \emph{quiet} half
@@ -504,9 +540,12 @@ silent reroute, is missed (F3) and is not plotted here.}
 \label{fig:gradient}
 \end{figure}
 
-\paragraph{F1: The benchmark discriminates.} Frontier models score
-0.48--0.51 damage-detection macro-F1 on the grounded split; the lower-tier
-models 0.27--0.42; all model-free floors $\leq$0.02 on that split
+\paragraph{F1: The benchmark discriminates.} The eight models span
+0.27--0.51 damage-detection macro-F1 on the grounded split: the four leaders
+(Opus 4.8, Kimi k2.6, Gemini 3.5 Flash, GPT-5.5) cluster at 0.48--0.51, the
+open-weight pair brackets the mid-tier (Kimi 0.49 tying the top of the fleet,
+DeepSeek v4-pro 0.44 above both Sonnet 4.6 and Haiku 4.5), and GPT-5.4-mini
+trails at 0.27; all model-free floors score $\leq$0.02 on that split
 (Table~\ref{tab:grounded}). On the templated split's damage instances,
 Haiku 4.5 and GPT-5.4-mini score 0.30$\pm$0.18 and 0.21$\pm$0.20 while the
 modal-by-class memorizer scores \textbf{0.00} and the best other floor
@@ -514,7 +553,7 @@ modal-by-class memorizer scores \textbf{0.00} and the best other floor
 saturated, and performance is not explained by template recall.
 
 \paragraph{F2: Models do not cry wolf on sessions.} The false-session-alarm
-rate is 0.00 for every model on every split it was evaluated on---all 810
+rate is 0.00 for every model on every split it was evaluated on---all 1{,}070
 samples. The widely-assumed failure mode---hallucinating session losses on
 any BGP-adjacent change---did not occur once, while the metric itself is
 demonstrably sensitive (the strawman floor trips it at 1.00). Models do,
@@ -538,67 +577,125 @@ invents sessions, prefixes, or blackholes out of nothing.
 \paragraph{F3: The blind spot is the quiet half, not the second order.}
 We expected models to read first-order table effects and miss second-order
 consequences. The data draw the line elsewhere. The \emph{loud} half is
-read well: every frontier model identifies both grounded blackholes on
+read well across the fleet: five of the eight models---the four leaders plus
+the open-weight DeepSeek v4-pro---identify both grounded blackholes on
 every sample (10/10 each on \emph{leak\_ms} and \emph{clos\_summary}---the
 latter a genuinely second-order, partial-ECMP consequence of a
 summarization change), Sonnet 4.6 nearly matches them (D7 0.97), and
-prefix-loss (D2) F1 is 0.73--0.83 across the frontier and Sonnet (0.77);
+prefix-loss (D2) F1 is 0.67--0.83 across that group;
 even the two cheapest models catch the explicit leak blackhole (Haiku 1.00
-grounded, 0.98 on the templated leak-blackhole class), though the two cheapest miss
-the implicit, topology-emergent one (\emph{clos\_summary}: Haiku 0.13,
-GPT-5.4-mini 0.13) that the frontier and Sonnet catch. Read where each
+grounded, 0.98 on the templated leak-blackhole class), though they alone
+miss the implicit, topology-emergent one (\emph{clos\_summary}: Haiku 0.13,
+GPT-5.4-mini 0.13). Read where each
 \emph{consequence} dimension is the ground truth, the picture is the same:
 the masked control-plane withdrawal (\emph{ipc3\_static}, D9) is caught at
-F1 1.00 by four models and 0.80/0.60 by the two cheapest; the
+F1 1.00 by six models and 0.80/0.60 by the two cheapest; the
 management-plane lockout (\emph{mgmt\_lockout}, D10) at 1.00 by Opus,
-GPT-5.5, and Sonnet (Haiku 0.76); and the explicit LOCAL\_PREF waypoint
-bypass (\emph{lp\_waypoint}, D4) at 1.00 by all six
-(Figure~\ref{fig:gradient}).
+GPT-5.5, and Sonnet, 0.80 by both open-weight models (Haiku 0.76, Gemini
+0.20); and the explicit LOCAL\_PREF waypoint bypass (\emph{lp\_waypoint},
+D4) at 1.00 by all eight (Figure~\ref{fig:gradient}).
 
 The \emph{quiet} half is the damage that survives this object-level
 reading: reachability holds, and the harm is a path or policy the diff
-never spells out. Its sharpest case is the leak-induced silent reroute: on
-the templated reroute variants, where a more-specific leak \emph{elsewhere}
-pulls a victim's traffic past its mandated waypoint while the route still
-resolves and every destination stays reachable, the two templated-split
-models miss it almost entirely (57/60 samples score 0 on both the waypoint
-and intent dimensions). We additionally ran the reroute class on the two
-Anthropic frontier models, Opus 4.8 and Sonnet 4.6: they do not escape it.
-Both score zero on \emph{both} the waypoint and intent dimensions on the
-majority of reroute samples---21/30 (Opus) and 18/30 (Sonnet)---despite
-reading the loud half at F1 1.00; their mean reroute F1 over the
-six-instance extension is low and high-variance (Opus waypoint
-0.26$\pm$0.25, intent 0.11$\pm$0.13; Sonnet 0.30$\pm$0.16, 0.20$\pm$0.13;
-$n{=}6$ point estimates). Across all four models evaluated on the reroute,
-96/120 samples score zero on both dimensions---the one place the frontier's
-otherwise near-perfect reading drops sharply. GPT-5.5 and Gemini were not
-run on the reroute extension, so this frontier evidence is Anthropic-only
-(\S\ref{sec:limitations}). A second, distinct case is
-aggregate preservation: when a customer's specific prefixes are dropped but
-a covering /24 survives (\emph{ipc\_aggregate}), models catch the prefix
-loss (D2) yet miss the traffic-pinning intent the surviving aggregate masks
-(D10 F1 $\leq$0.20 for five of six models). The low \emph{dimensional}
-means for the consequence dimensions (active-convention D7 0.17--0.40, D9
-0.09--0.14, D10 0.02--0.11; Figure~\ref{fig:heatmap}) are \emph{not} recall
-failures: they are
-dominated by taxonomy-boundary false positives---each model predicts a
-consequence dimension on roughly three (D7), six (D9), and eight (D10) of
-the eleven grounded instances where the oracle reserves a neighboring
-label---the same over-prediction the paper discloses for the D3/D7 boundary
-(F2). The genuine miss is narrow and consistent: damage is read when it
-deletes or blackholes something nameable, and missed when every object
-survives and only the path silently shifts---precisely the class that
-produced the 2019 leak incidents, where traffic kept flowing, just wrongly.
+never spells out. Its sharpest case is the leak-induced silent reroute, and
+it \emph{separates the fleet} (Table~\ref{tab:reroute}). On the six reroute
+instances---where a more-specific leak \emph{elsewhere} pulls a victim's
+traffic past its mandated waypoint while the route still resolves and every
+destination stays reachable---most models score zero on \emph{both} the
+waypoint and intent dimensions on the majority of samples: GPT-5.4-mini and
+Gemini 3.5 Flash on all 30, Haiku 4.5 on 27/30, Opus 4.8 on 21/30, and
+Sonnet 4.6 on 18/30---and Opus and Gemini do this \emph{despite} topping the
+loud half (their D7/D9/D10 are at or near 1.00). Only two models register it at
+all: GPT-5.5 escapes total blindness on 29 of 30 samples (waypoint F1 0.64),
+and the open-weight DeepSeek v4-pro on 20 of 30 (0.56)---and even these reads
+are mostly of the waypoint \emph{element}; the paired traffic-pinning
+\emph{intent} key is missed far more often (credited on 19/30 of GPT-5.5's
+and 7/30 of DeepSeek's samples), so no model reliably reports the full
+reroute. Reading the silent reroute is nonetheless a distinct capability
+axis---uncorrelated with loud-half skill (Opus and Gemini top the loud half
+yet miss the reroute) and not vendor-bound: a proprietary model (GPT-5.5)
+and an open-weight one (DeepSeek) clear the field together (F4). This
+differentiation is grader-dependent: under naive exact-string matching,
+\emph{every} model scores both-zero on all 30 (the same probe-granularity
+artifact as D7, \S\ref{sec:graderfinding}); the semantic grader's
+canonicalization of the waypoint and intent keys is what exposes the split,
+so the headline rests on the matching specification for D4/D10---config-derived
+and floor-invariant (F5) but, unlike D1/D2/D8/D9, not provably the identity. A second, distinct quiet case is aggregate preservation: when a
+customer's specific prefixes are dropped but a covering /24 survives
+(\emph{ipc\_aggregate}), models catch the prefix loss (D2) yet miss the
+traffic-pinning intent the surviving aggregate masks (D10 F1 $\leq$0.20 for
+seven of the eight). The low \emph{dimensional} means for the consequence
+dimensions (active-convention D7 0.17--0.40, D9 0.09--0.14, D10 0.02--0.11;
+Figure~\ref{fig:heatmap}) are \emph{not} recall failures: they are dominated
+by taxonomy-boundary false positives---each model predicts a consequence
+dimension on roughly three (D7), six (D9), and eight (D10) of the eleven
+grounded instances where the oracle reserves a neighboring label---the same
+over-prediction the paper discloses for the D3/D7 boundary (F2). The genuine
+miss is narrow and consistent: damage is read when it deletes or blackholes
+something nameable, and missed---by most of the fleet---when every object
+survives and only the path silently shifts. This is the path/policy-violation
+kernel of the more-specific-leak class (the 2019 Cloudflare/Verizon leak among
+them), which we model deterministically, isolated from the congestion and loss
+the real incidents also produced (\S\ref{sec:task}). We measure the split on
+six seed-and-scope variants of a \emph{single} leak-reroute mechanism; whether
+it generalizes across structurally distinct quiet-reroute mechanisms---LOCAL\_PREF
+steering, AS-path manipulation, aggregate masking---is the central open
+question (\S\ref{sec:limitations}).
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & both-zero & waypoint & intent & waypoint \\
+Model & (total miss) & credited & credited & F1 \\
+\midrule
+GPT-5.5                     & 1/30  & 29/30 & 19/30 & 0.64 \\
+DeepSeek v4-pro \emph{(ow)} & 10/30 & 20/30 & 7/30  & 0.56 \\
+Claude Sonnet 4.6           & 18/30 & 11/30 & 11/30 & 0.30 \\
+Claude Opus 4.8             & 21/30 & 8/30  & 4/30  & 0.26 \\
+Kimi k2.6 \emph{(ow)}       & \multicolumn{4}{c}{\textit{reroute run completing as of this draft}} \\
+Claude Haiku 4.5            & 27/30 & 3/30  & 1/30  & 0.10 \\
+GPT-5.4-mini                & 30/30 & 0/30  & 0/30  & 0.00 \\
+Gemini 3.5 Flash            & 30/30 & 0/30  & 0/30  & 0.00 \\
+\bottomrule
+\end{tabular}
+\caption{The silent reroute separates the fleet (six instances, $N{=}5$,
+semantic grader). ``both-zero'' $=$ samples scoring 0 on \emph{both} the
+waypoint (D4) and intent (D10) dimensions (total blindness); ``credited'' $=$
+samples with nonzero F1 on that dimension. Two models clear the field
+(GPT-5.5 and the open-weight DeepSeek), statistically tied at the top (paired
+$t{=}1.3$, $n{=}6$ instances, n.s.) and well above the rest; the loud-half
+leaders Opus 4.8 and Gemini 3.5 Flash miss it. Even the leaders credit the
+traffic-pinning \emph{intent} key far less often than the waypoint element,
+so no model reads the full reroute. Under exact-string matching every model
+scores both-zero on all 30 (granularity artifact, \S\ref{sec:graderfinding});
+the split is a semantic-grader result.}
+\label{tab:reroute}
+\end{table}
 
 \paragraph{F4: No home-field advantage.} The benchmark was developed and
 red-teamed primarily with Claude-family models, so grader circularity was a
-live concern. The cross-vendor frontier lands within noise of itself: Opus
-4.8 at 0.51, Gemini 3.5 Flash at 0.49, GPT-5.5 at 0.48---a spread of 0.03
-against a per-model standard error of $\approx$0.05 ($n{=}11$ instances),
-so the three are statistically indistinguishable. The Anthropic frontier
-does not outscore the non-Anthropic frontier; the second Anthropic model
-(Sonnet 4.6, 0.42) scores \emph{below} both non-Anthropic frontier models,
-so the Claude-built benchmark does not favor the Claude family.
+live concern. Three lines of evidence rule it out. \emph{(i)~Frontier parity:}
+the cross-vendor leaders land within noise of one another---Opus 4.8 at 0.51,
+Kimi k2.6 at 0.49, Gemini 3.5 Flash at 0.49, GPT-5.5 at 0.48---a spread of
+0.03 against a per-model standard error of $\approx$0.05 ($n{=}11$
+instances), statistically indistinguishable (a Welch $t$-test on per-instance
+means does not reject equality, $t{=}0.35$). \emph{(ii)~No Claude tilt:} the
+second Anthropic model (Sonnet 4.6, 0.42) scores \emph{below} four
+non-Anthropic models, and a non-Anthropic open-weight model (Kimi, 0.49)
+ties the best non-Anthropic closed model, so the Claude-built benchmark does
+not favor the Claude family. \emph{(iii)~On the headline:}
+the one capability the benchmark most sharply discriminates---reading the
+silent reroute (F3)---is cleared by two models, one proprietary (GPT-5.5) and
+one \emph{open-weight} (DeepSeek v4-pro), statistically tied at the top
+(paired $t{=}1.3$, $n{=}6$ instances, n.s.) and both well above the rest.
+DeepSeek's waypoint F1 (0.56) exceeds every Anthropic and Google model's
+(Opus 0.26, Sonnet 0.30, Haiku 0.10, Gemini 0.00)---significantly over Opus
+(paired $t{=}2.7$, $p{=}0.045$) and marginally over the next-best Claude model
+Sonnet ($t{=}2.2$, $p{=}0.08$, $n{=}6$). The robust statement is that an
+open-weight reasoner stands among the two field-clearing models, so the
+quiet-half gap is neither a Claude-family nor a closed-model artifact---though
+on $n{=}6$ instances we do not claim a strict open-beats-all ordering.
 
 \paragraph{F5: Naive set grading would have reported universal blindness.}
 Under exact-string matching against the oracle's probe-granularity keys,
@@ -631,8 +728,9 @@ template-recall strategy---scores 0.00.}
 routing tables would be caught by any reviewer; an assistant that reads
 them competently, catches the withdrawal and the lockout, never
 false-alarms on sessions (F2), and yet silently misses the leak-induced
-reroute (F3) is trusted exactly where it is most dangerous---on the one
-failure mode that leaves no object lost to catch. Binary safety metrics
+reroute (F3)---as most of the evaluated fleet does---is trusted exactly
+where it is most dangerous---on the one failure mode that leaves no object
+lost to catch. Binary safety metrics
 cannot surface this: under a pass/fail rubric, a model that predicts
 ``no impact'' on a reroute instance is indistinguishable from one that
 flags the waypoint bypass, because both made \emph{a} prediction. Typed,
@@ -651,11 +749,21 @@ $\rightarrow$ \emph{gated-execute} $\rightarrow$ \emph{autonomous}---a
 system would demonstrate, before advancing past \emph{propose}, that it can
 enumerate the blast radius of its own changes at a calibrated
 precision/recall point \emph{across all scored dimensions, including the
-quiet ones}. No evaluated model meets that bar today: frontier models pass
-it on the loud half of 4--6 node networks and fail it on the quiet half of
-the same networks. We conjecture the quiet-half gap does not close as
-topologies grow---the inference chains only lengthen---but scale is
-untested here.
+quiet ones}. No evaluated model fully meets that bar today, but the data
+locate the frontier of the gate precisely. Every model passes on the loud
+half of these 4--6 node networks; on the quiet half the strongest reasoners
+are \emph{beginning} to pass---GPT-5.5 reads the silent reroute on 29 of 30
+samples (waypoint F1 0.64) and the open-weight DeepSeek v4-pro on 20 of 30
+(0.56)---while most of the fleet, including the models that top the loud
+half (Opus 4.8, Gemini 3.5 Flash), still fails it outright. The gate
+therefore discriminates twice: loud from quiet, and---within the quiet
+half---the reasoning frontier from the rest, which is the kind of resolution
+a promotion gate would need. We offer the autonomy ladder as a \emph{position},
+not a validated instrument: establishing blast-radius prediction as an actual
+gate requires the larger-topology and human-expert-baseline studies we defer
+(\S\ref{sec:limitations}), and we conjecture---without testing it---that the
+quiet-half gap does not close as topologies grow, since the inference chains
+only lengthen.
 
 \paragraph{Open problems.} Five follow directly. (1)~\emph{Tools-augmented
 contrast}: how much of the quiet-half gap closes when the model may invoke
@@ -747,12 +855,22 @@ the oracle compute the right ground truth?---is addressed by the
 determinism gate, the live-FRR spot checks (\S\ref{sec:task}), and the
 frozen matching specification. A human-\emph{expert baseline} (can a senior
 operator enumerate the quiet half from the same evidence?) is the named
-next experiment and is not claimed here. The frontier evidence for the
-headline silent-reroute miss (F3) is Anthropic-only: the reroute extension
-ran on Opus 4.8 and Sonnet 4.6, but GPT-5.5 and Gemini were not available
-for it, so a cross-vendor reroute test---which would also extend the
-home-field control (F4) to the headline finding---is the first
-camera-ready item.
+next experiment and is not claimed here---it is the load-bearing control for
+reading the quiet-half miss as a \emph{model} limitation rather than intrinsic
+task hardness. The headline silent-reroute result also rests on six
+seed-and-scope variants of a \emph{single} leak-reroute mechanism; whether the
+loud/quiet split generalizes to structurally distinct quiet-reroute mechanisms
+(LOCAL\_PREF steering, AS-path manipulation, aggregate masking) is the central
+open question and the first item a v1.1 must test. Relatedly, the reroute split
+is a \emph{semantic-grader} result---under exact-string matching no model reads
+it (F3)---so the matching specification for the flow-scoped dimensions D4/D7/D10
+is a config-derived, floor-invariant, model-independent design choice (F5) that,
+unlike the config-visible dimensions, has not been validated against independent
+human judgments; a grader-validity check on those canonicalization decisions is
+the natural complement to the human-expert baseline. The two open-weight models
+were evaluated on the grounded and silent-reroute classes but not on the
+cost-capped templated split, so their templated-floor comparison is deferred
+with the full-fleet templated run.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -762,12 +880,16 @@ determinism-gated, judge-free benchmark for it, and measured where current
 LLMs sit. The line we found is not the one we expected: models---including
 mid-tier ones---catch the damage that announces itself, up to and including
 a second-order partial-ECMP blackhole, and never hallucinate a session
-loss; what they miss---the one class where even the frontier's near-perfect
-loud-half reading collapses---is the damage that removes no object and only
-shifts the path: the leak-induced silent reroute past the inspection node,
-where the route still resolves, the session stays up, and reachability
-survives, while they catch the withdrawal, the lockout, and the blackhole,
-which all delete something nameable. We
+loss; where most of them stumble---the one class that separates the
+reasoning frontier from the rest---is the damage that removes no object and
+only shifts the path: the leak-induced silent reroute past the inspection
+node, where the route still resolves, the session stays up, and reachability
+survives. Most of the fleet misses it even while catching the withdrawal,
+the lockout, and the blackhole, which all delete something nameable; only
+two models clear it---GPT-5.5 and the open-weight DeepSeek v4-pro, tied at the
+top and well above the rest---an open-weight model standing among the
+leaders, which rules out a closed-model or Claude-family artifact on the one
+capability the benchmark most sharply discriminates. We
 also showed how easily a verifier-graded benchmark can manufacture the
 opposite, more dramatic headline through granularity-mismatched string
 grading, and we release both graders with a frozen matching specification
@@ -783,8 +905,8 @@ oracle digests, determinism reports, prompts, raw model outputs, graded
 results under both graders, and the frozen semantic-matching specification
 will be released alongside the peer-reviewed version; every number in this
 report traces to a saved run artifact (including the pooled Gemini sample
-set, both Sonnet runs, and the Opus/Sonnet reroute extension) and will be
-reproducible from that release.
+set, both Sonnet runs, and the eight-model silent-reroute extension) and will
+be reproducible from that release.
 
 \paragraph{Acknowledgments and AI disclosure.} LLM tooling (Claude) was
 used extensively under the author's direction for drafting, engineering,
@@ -814,12 +936,14 @@ metric.
  & \multicolumn{2}{c}{macro-F1 (damage)} & \multicolumn{2}{c}{forwarding D7 (active conv.)} \\
 Model & exact & semantic & exact & semantic \\
 \midrule
-Claude Opus 4.8    & 0.37$\pm$0.27 & 0.51$\pm$0.17 & 0.00 & 0.40 \\
-Gemini 3.5 Flash   & 0.36$\pm$0.28 & 0.49$\pm$0.18 & 0.00 & 0.40 \\
-GPT-5.5            & 0.36$\pm$0.27 & 0.48$\pm$0.17 & 0.00 & 0.33 \\
-Claude Sonnet 4.6  & 0.30$\pm$0.17 & 0.42$\pm$0.06 & 0.00 & 0.32 \\
-Claude Haiku 4.5   & 0.29$\pm$0.17 & 0.39$\pm$0.10 & 0.00 & 0.23 \\
-GPT-5.4-mini       & 0.22$\pm$0.22 & 0.27$\pm$0.21 & 0.00 & 0.17 \\
+Claude Opus 4.8       & 0.37$\pm$0.27 & 0.51$\pm$0.17 & 0.00 & 0.40 \\
+Kimi k2.6 \emph{(ow)} & 0.36$\pm$0.24 & 0.49$\pm$0.12 & 0.00 & 0.40 \\
+Gemini 3.5 Flash      & 0.36$\pm$0.28 & 0.49$\pm$0.18 & 0.00 & 0.40 \\
+GPT-5.5               & 0.36$\pm$0.27 & 0.48$\pm$0.17 & 0.00 & 0.33 \\
+DeepSeek v4-pro \emph{(ow)} & 0.31$\pm$0.18 & 0.44$\pm$0.08 & 0.00 & 0.33 \\
+Claude Sonnet 4.6     & 0.30$\pm$0.17 & 0.42$\pm$0.06 & 0.00 & 0.32 \\
+Claude Haiku 4.5      & 0.29$\pm$0.17 & 0.39$\pm$0.10 & 0.00 & 0.23 \\
+GPT-5.4-mini          & 0.22$\pm$0.22 & 0.27$\pm$0.21 & 0.00 & 0.17 \\
 \bottomrule
 \end{tabular}
 \caption{Grounded split under both graders. The exact-string D7 column is

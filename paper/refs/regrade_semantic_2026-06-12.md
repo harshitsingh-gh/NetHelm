@@ -1,6 +1,6 @@
 # Semantic regrade — old (exact-string) vs new (semantic) grader
 
-Generated: 20260614_044753  |  script: `scripts/regrade_semantic.py`  |  spec: `docs/semantic_grading_spec_v1.md` (FROZEN)
+Generated: 20260614_081714  |  script: `scripts/regrade_semantic.py`  |  spec: `docs/semantic_grading_spec_v1.md` (FROZEN)
 
 NO paid API calls; regraded from saved artifacts only. Aggregation = two-stage scenario-level (per-instance mean over N=5 samples, then mean±std across instances), per split, never pooled. macro dmg = damage-detection macro over NON-EMPTY-truth instances only.
 
@@ -18,7 +18,7 @@ NO paid API calls; regraded from saved artifacts only. Aggregation = two-stage s
 | claude-haiku-4-5-20251001 | 0.29±0.17 | **0.39±0.10** | 0.29 | **0.39** | 0.00 | 0.00 | 0.00 |
 | gpt-5.4-mini | 0.22±0.22 | **0.27±0.21** | 0.22 | **0.27** | 0.00 | 0.00 | 0.00 |
 | deepseek-v4-pro | 0.31±0.18 | **0.44±0.08** | 0.31 | **0.44** | 0.00 | 0.00 | 0.00 |
-| kimi-k2.6 | 0.36±0.10 | **0.42±0.06** | 0.36 | **0.42** | 0.00 | 0.00 | 0.00 |
+| kimi-k2.6 | 0.36±0.24 | **0.49±0.12** | 0.36 | **0.49** | 0.00 | 0.00 | 0.00 |
 
 ### Per-dimension mean F1 — old vs NEW (the dimensions the artifact hit)
 
@@ -38,8 +38,8 @@ NO paid API calls; regraded from saved artifacts only. Aggregation = two-stage s
 | gpt-5.4-mini | NEW | 0.26±0.34 | 0.06±0.08 | 1.00±0.00 | 0.17±0.03 | 0.09±0.21 | 0.06±0.18 | 0.33±0.47 | 0.60(n1) |
 | deepseek-v4-pro | old | 0.67±0.43 | 0.33±0.47 | 0.50±0.50 | 0.00±0.00 | 0.14±0.35 | 0.08±0.24 | 0.33±0.47 | 1.00(n1) |
 | deepseek-v4-pro | NEW | 0.67±0.43 | 0.60±0.45 | 1.00±0.00 | 0.33±0.47 | 0.14±0.35 | 0.08±0.24 | 0.33±0.47 | 1.00(n1) |
-| kimi-k2.6 | old | 0.97±0.04 | 0.50±0.50 | - | 0.00±0.00 | 0.00±0.00 | 0.00±0.00 | 1.00(n1) | - |
-| kimi-k2.6 | NEW | 0.97±0.04 | 0.50±0.50 | - | 0.50±0.50 | 0.00±0.00 | 0.00±0.00 | 1.00(n1) | - |
+| kimi-k2.6 | old | 0.81±0.36 | 0.40±0.49 | 0.50±0.50 | 0.00±0.00 | 0.14±0.35 | 0.08±0.24 | 0.50±0.50 | 1.00(n1) |
+| kimi-k2.6 | NEW | 0.81±0.36 | 0.70±0.40 | 1.00±0.00 | 0.40±0.49 | 0.14±0.35 | 0.08±0.24 | 0.50±0.50 | 1.00(n1) |
 
 ### Floors — grounded (old vs NEW)
 
@@ -139,7 +139,7 @@ The paper's *structure* (blast-radius task, oracle pipeline, deterministic set g
 
 - gemini clean reconstructed: 55 samples / 11 instances
 - extra source deepseek/deepseek-v4-pro (sweep_20260613_224649): 55 grounded samples graded; truth-determinism vs canonical: PASS
-- extra source kimi/kimi-k2.6 (sweep_20260614_030415): 20 grounded samples graded; truth-determinism vs canonical: PASS
+- extra source kimi/kimi-k2.6 (sweep_20260614_030415): 55 grounded samples graded; truth-determinism vs canonical: PASS
 - sonnet 12k re-run (sweep_20260613_093307): 55 grounded samples graded, supersedes the 4k-cap rows; truth-determinism vs 4k: PASS
-- reproduction gate: 830 checked, 0 mismatches (PASS)
+- reproduction gate: 865 checked, 0 mismatches (PASS)
 - floor reproduction gate: 339 checked, 0 mismatches (PASS)

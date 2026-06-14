@@ -26,9 +26,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "paper" / "draft" / "figs"
 
-REGRADE = ROOT / "runs/regrade_semantic_20260613_101508"  # 12k Sonnet baked in
-# When the 12k-cap Sonnet grounded re-run is regraded, point this at that regrade
-# dir; Sonnet's grounded cells are then read from it instead of REGRADE.
+REGRADE = ROOT / "runs/regrade_semantic_20260614_081714"  # 8 models; 12k Sonnet + DeepSeek + Kimi baked in
+# The 8-model regrade was run with --sonnet-grounded-dir, so Sonnet's grounded rows
+# are already the 12k-cap re-run inside REGRADE; no separate override needed.
 SONNET_OVERRIDE: Path | None = None
 
 SONNET_KEY = "anthropic/claude-sonnet-4-6 @ no_tools"
@@ -36,8 +36,10 @@ SONNET_KEY = "anthropic/claude-sonnet-4-6 @ no_tools"
 # display order: descending grounded macro (matches Table 2 / appendix)
 MODELS = [
     ("Opus-4.8",       "anthropic/claude-opus-4-8 @ no_tools"),
+    ("Kimi-k2.6",      "kimi/kimi-k2.6 @ no_tools"),
     ("Gemini-3.5-F",   "gemini/gemini-3.5-flash @ no_tools"),
     ("GPT-5.5",        "openai/gpt-5.5 @ no_tools"),
+    ("DeepSeek-v4",    "deepseek/deepseek-v4-pro @ no_tools"),
     ("Sonnet-4.6",     SONNET_KEY),
     ("Haiku-4.5",      "anthropic/claude-haiku-4-5-20251001 @ no_tools"),
     ("GPT-5.4-mini",   "openai/gpt-5.4-mini @ no_tools"),
