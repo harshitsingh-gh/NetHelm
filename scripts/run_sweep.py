@@ -83,6 +83,16 @@ MODEL_REGISTRY = {
     # Open-weight local serving (vLLM); cost = GPU-hours, recorded separately.
     "vllm/qwen3-32b": {
         "id": "Qwen/Qwen3-32B", "price_in": 0.0, "price_out": 0.0, "paid": True},
+    # Open-weight via hosted OpenAI-compatible endpoints (paid; $ tracked via _usd).
+    # No "sampling" key -> resolve_temperature returns None (no temperature sent),
+    # same as the other reasoning models; nondeterminism drives N>1 variance.
+    # Prices are estimates for cost logging; the hard cap is the provider account.
+    "deepseek/deepseek-v4-pro": {
+        "id": "deepseek-v4-pro", "base_url": "https://api.deepseek.com",
+        "key_env": "DEEPSEEK_API_KEY", "price_in": 0.6, "price_out": 2.2, "paid": True},
+    "kimi/kimi-k2.6": {
+        "id": "kimi-k2.6", "base_url": "https://api.moonshot.ai/v1",
+        "key_env": "KIMI_API_KEY", "price_in": 0.6, "price_out": 3.4, "paid": True},
 }
 
 
@@ -101,6 +111,12 @@ class Instance:
 # Grounded scenarios that are NOT traps (static-route sanity anchors) — for honest
 # false_session_alarm attribution in fake mode.
 _GROUNDED_NONTRAP = {"square4", "ecmp4", "waypoint4"}
+
+# Output-token budget for the anthropic/vllm paths (openai/gemini already run at
+# 16000/uncapped). 4000 was the 2026-06-10 freeze value; it hard-truncated 6/55
+# Sonnet 4.6 grounded samples mid-reasoning (regrade_semantic_2026-06-12.md), so
+# re-runs may raise it via --max-output-tokens. Recorded in the manifest via args.
+MAX_OUTPUT_TOKENS = 4000
 
 
 def resolve_temperature(model: str, override: float | None) -> float | None:
@@ -240,13 +256,16 @@ def predict_keysets(model: str, scn, truth: KeySets, instance_id: str,
               else fake_model_keysets(truth, instance_id, sample_idx, temperature))
         return ks, {"tokens_in": 0, "tokens_out": 0, "usd": 0.0}, None
 
-    if model.startswith(("anthropic/", "openai/", "gemini/", "vllm/")):
+    if model.startswith(("anthropic/", "openai/", "gemini/", "vllm/",
+                         "deepseek/", "kimi/")):
         if model.startswith("anthropic/"):
             raw, cost = _call_anthropic(model, scn, temperature, pre_state)
         elif model.startswith("openai/"):
             raw, cost = _call_openai(model, scn, temperature, pre_state)
         elif model.startswith("vllm/"):
             raw, cost = _call_vllm(model, scn, temperature, pre_state)
+        elif model.startswith(("deepseek/", "kimi/")):
+            raw, cost = _call_oai_compat(model, scn, temperature, pre_state)
         else:
             raw, cost = _call_gemini(model, scn, temperature, pre_state)
         from netbrace.evals.extended_parser import parse_extended_prediction
@@ -291,7 +310,7 @@ def _call_anthropic(model: str, scn, temperature: float,
     # removed sampling params — sending temperature returns a 400).
     client = anthropic.Anthropic(timeout=120.0, max_retries=2)
     kwargs = dict(
-        model=model_id, max_tokens=4000,
+        model=model_id, max_tokens=MAX_OUTPUT_TOKENS,
         messages=[{"role": "user", "content": _prompt_for(scn, pre_state)}],
     )
     if temperature is not None:
@@ -354,7 +373,7 @@ def _call_vllm(model: str, scn, temperature: float,
     client = OpenAI(base_url=base, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
                     timeout=180.0, max_retries=2)
     resp = client.chat.completions.create(
-        model=model_id, temperature=temperature, max_tokens=4000,
+        model=model_id, temperature=temperature, max_tokens=MAX_OUTPUT_TOKENS,
         messages=[{"role": "user", "content": _prompt_for(scn, pre_state)}],
     )
     raw = resp.choices[0].message.content or ""
@@ -362,6 +381,58 @@ def _call_vllm(model: str, scn, temperature: float,
     tin = getattr(u, "prompt_tokens", 0) or 0
     tout = getattr(u, "completion_tokens", 0) or 0
     return raw, {"tokens_in": tin, "tokens_out": tout, "usd": 0.0}
+
+
+def _call_oai_compat(model: str, scn, temperature: float,
+                     pre_state: str | None = None) -> tuple[str, dict]:
+    """Hosted OpenAI-compatible open-weight providers (DeepSeek api.deepseek.com,
+    Moonshot/Kimi api.moonshot.ai). base_url + key_env come from the registry;
+    same prompt contract as every other model; $ cost tracked via _usd.
+
+    STREAMS the completion (2026-06-14). These are reasoning models whose hidden
+    chain-of-thought can run to many thousands of tokens, so a NON-streaming call
+    blocks until the server has computed the ENTIRE response before sending ANY
+    bytes. On the big grounded prompts Kimi k2.6's first call never returned
+    response headers inside the socket read timeout and wedged a whole run (26 min,
+    0 completions). Streaming makes headers arrive in ~1 s and the per-CHUNK read
+    timeout resets on every token, so a long-but-steady generation completes while a
+    genuinely stalled socket still fails fast (-> _retrying backoff -> SKIP). Any
+    separate reasoning_content is ignored; the tolerant parser pulls the final JSON
+    object from the accumulated message content."""
+    import os
+    import httpx
+    from openai import OpenAI  # lazy; both speak the OpenAI chat API
+    reg = MODEL_REGISTRY[model]
+    key = os.environ.get(reg["key_env"])
+    if not key:
+        raise SystemExit(f"{reg['key_env']} not set --- required for {model}.")
+    # Per-CHUNK read timeout (NOT a total deadline): 180 s of silence => fail; an
+    # actively streaming generation resets it on every token.
+    client = OpenAI(base_url=reg["base_url"], api_key=key,
+                    timeout=httpx.Timeout(connect=15.0, read=180.0,
+                                          write=15.0, pool=15.0),
+                    max_retries=2)
+    kwargs = dict(model=reg["id"], max_tokens=MAX_OUTPUT_TOKENS,
+                  messages=[{"role": "user", "content": _prompt_for(scn, pre_state)}],
+                  stream=True, stream_options={"include_usage": True})
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    content = ""
+    tin = tout = 0
+    for chunk in client.chat.completions.create(**kwargs):
+        if not chunk.choices:                       # final usage-only chunk
+            u = getattr(chunk, "usage", None)
+            if u:
+                tin = getattr(u, "prompt_tokens", 0) or 0
+                tout = getattr(u, "completion_tokens", 0) or 0
+            continue
+        piece = getattr(chunk.choices[0].delta, "content", None)
+        if piece:
+            content += piece
+    if tout == 0 and content:                       # provider omitted usage chunk
+        tout = len(content) // 4
+    return content, {"tokens_in": tin, "tokens_out": tout,
+                     "usd": _usd(model, tin, tout)}
 
 
 def _call_gemini(model: str, scn, temperature: float,
@@ -395,6 +466,20 @@ def _call_gemini(model: str, scn, temperature: float,
         config=gtypes.GenerateContentConfig(max_output_tokens=16000),
     )
     raw = getattr(resp, "text", "") or ""
+    if not raw.strip():
+        # An empty body is NOT a model answer. Distinguish two cases:
+        #   * finish_reason MAX_TOKENS — a real (truncated) output: grade it as
+        #     invalid like any other unparseable answer; retrying would bias the
+        #     invalid_rate measurement.
+        #   * anything else (empty candidates / safety block / silent 200 during
+        #     an overload window) — a provider anomaly: raise retryable so
+        #     _retrying backs off instead of paying for a vacuous "invalid".
+        cands = getattr(resp, "candidates", None) or []
+        fr = str(getattr(cands[0], "finish_reason", "")) if cands else ""
+        if "MAX_TOKENS" not in fr.upper():
+            raise _RetryableProviderError(
+                f"gemini returned an empty body (finish_reason={fr or 'none'}, "
+                f"candidates={len(cands)})")
     um = getattr(resp, "usage_metadata", None)
     tin = getattr(um, "prompt_token_count", 0) or 0
     # total - prompt = output (+thinking); thinking is billed at the output rate on 2.5.
@@ -408,19 +493,100 @@ class _ModelCallFailed(RuntimeError):
     """A model call failed after all retries (provider outage / persistent error)."""
 
 
-def _retrying(fn, *args, attempts: int = 3, **kwargs):
-    """Call ``fn`` with exponential backoff on ANY exception (the provider SDKs
-    already retry transient errors internally; this layer covers sustained 503s /
-    overload windows). Raises _ModelCallFailed after ``attempts`` failures."""
+# Consecutive post-backoff sample losses before a (model, condition) is declared
+# down and its remaining work skipped (each loss already cost up to ~10 min of
+# backoff — 5 in a row is a sustained outage, not flakiness).
+_ABORT_AFTER = 5
+
+
+def _completeness_report(models, conditions, instances, samples,
+                         collected: dict[str, dict[str, int]]) -> dict:
+    """Expected-vs-collected ledger for every (model, condition) cell. A cell is
+    one instance; ``missing`` maps instance_id -> number of samples still owed.
+    ``complete`` is the run-level verdict the manifest carries."""
+    report: dict = {"samples_per_instance": samples, "cells": {},
+                    "incomplete_cells": [], "complete": True}
+    for model in models:
+        if model in ("fake", "fake-oracle"):
+            continue  # zero-API paths can't lose samples to a provider
+        for cond in conditions:
+            key = f"{model} @ {cond}"
+            got = collected.get(key, {})
+            missing = {i.instance_id: samples - got.get(i.instance_id, 0)
+                       for i in instances
+                       if got.get(i.instance_id, 0) < samples}
+            cell = {"expected": len(instances) * samples,
+                    "collected": sum(got.values()),
+                    "missing": missing}
+            report["cells"][key] = cell
+            if missing:
+                report["incomplete_cells"].append(key)
+                report["complete"] = False
+    return report
+
+
+def _print_completeness(report: dict, args) -> None:
+    if report["complete"]:
+        print("[completeness] OK — every (model, condition, instance) cell has "
+              f"all {report['samples_per_instance']} samples.", flush=True)
+        return
+    print("\n" + "=" * 76, flush=True)
+    print("[completeness] *** RUN IS INCOMPLETE — do not report it as final ***",
+          flush=True)
+    for key in report["incomplete_cells"]:
+        cell = report["cells"][key]
+        print(f"  {key}: {cell['collected']}/{cell['expected']} samples; "
+              f"{len(cell['missing'])} instances short", flush=True)
+        ids = sorted(cell["missing"])
+        model = key.split(" @ ")[0]
+        print(f"    top-up: python scripts/run_sweep.py --models {model} "
+              f"--oracle batfish --samples {args.samples} "
+              f"--split {args.split} --n-generated {args.n_generated} "
+              f"--seed {args.seed} --include {','.join(ids)}", flush=True)
+    print("  then pool post-freeze runs (see scripts/build_clean_gemini.py for "
+          "the audited pattern).", flush=True)
+    print("=" * 76 + "\n", flush=True)
+
+
+class _RetryableProviderError(RuntimeError):
+    """A provider returned a degenerate response that is NOT a model answer
+    (e.g. a 200 with an empty body) — retry it like a 503, never grade it."""
+
+
+# Errors where retrying is pointless (mis-set key, bad request, gone model):
+# fail FAST so a misconfigured paid run dies on call 1, not after 8 backoffs.
+_FATAL_MARKERS = (
+    "api key", "api_key", "401", "403", "permission", "unauthorized",
+    "invalid_request", "400", "not found", "404", "model_not_found",
+    "unsupported", "billing",
+)
+
+
+def _is_fatal(e: Exception) -> bool:
+    msg = f"{type(e).__name__}: {e}".lower()
+    return any(m in msg for m in _FATAL_MARKERS)
+
+
+def _retrying(fn, *args, attempts: int = 8, base: float = 5.0, cap: float = 120.0,
+              **kwargs):
+    """Call ``fn`` with TRUE exponential backoff + jitter on transient errors
+    (5,10,20,40,80,120,120s x uniform(0.5,1.5) — worst case ~10 min/sample,
+    sized for Gemini's multi-minute 503 'high demand' windows that the old
+    3x15/30/45s ladder could not outlast, which is what left runs incomplete
+    on 2026-06-11 and forced the pooling workaround). Fatal errors (auth/bad
+    request/unknown model) raise immediately — retrying those only burns time.
+    Raises _ModelCallFailed after ``attempts`` transient failures."""
     last: Exception | None = None
     for a in range(attempts):
         try:
             return fn(*args, **kwargs)
         except Exception as e:  # noqa: BLE001 — provider SDKs raise varied types
+            if _is_fatal(e):
+                raise _ModelCallFailed(f"[fatal, not retried] {e}") from e
             last = e
-            wait = 15 * (a + 1)
-            print(f"[model-retry] attempt {a + 1}/{attempts} failed ({e}); "
-                  f"sleeping {wait}s", flush=True)
+            wait = min(cap, base * (2 ** a)) * random.uniform(0.5, 1.5)
+            print(f"[model-retry] attempt {a + 1}/{attempts} failed "
+                  f"({type(e).__name__}: {e}); sleeping {wait:.0f}s", flush=True)
             time.sleep(wait)
     raise _ModelCallFailed(str(last))
 
@@ -436,6 +602,21 @@ def run_sweep(args) -> dict:
                                 exclude=exclude)
     if getattr(args, "limit", 0):
         instances = instances[:args.limit]  # pre-flight cap (CLAUDE.md --limit rule)
+    # --include: surgical top-up of EXACTLY the missing cells from an incomplete
+    # run (paste the id list from its completeness.json). Same split/seed args ->
+    # same instances + same frozen prompt -> the new draws are poolable i.i.d.
+    # samples of the same condition (the build_clean_gemini.py contract).
+    include = [x.strip() for x in getattr(args, "include", "").split(",") if x.strip()]
+    if include:
+        known = {i.instance_id for i in instances}
+        unknown = sorted(set(include) - known)
+        if unknown:
+            raise SystemExit(
+                f"--include ids not found in the built instance set: {unknown}\n"
+                f"(check --split/--n-generated/--seed match the original run)")
+        instances = [i for i in instances if i.instance_id in set(include)]
+        print(f"[include] top-up mode: {len(instances)} instance(s) selected",
+              flush=True)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     for m in models:
         if m not in MODEL_REGISTRY:
@@ -522,12 +703,23 @@ def run_sweep(args) -> dict:
     # 2) model predictions: N samples per (instance, model, condition).
     # records[(model, condition)][split] = {instance_id: [score_dict, ...]}
     model_records: dict[tuple[str, str], dict[str, dict[str, list[dict]]]] = {}
+    # collected["model @ cond"][instance_id] = n graded samples — feeds the
+    # end-of-run completeness report (a run must never LOOK complete silently).
+    collected: dict[str, dict[str, int]] = {}
     for model in models:
         temp = resolve_temperature(model, args.temperature)
         for cond in conditions:
             per_split: dict[str, dict[str, list[dict]]] = {"templated": {}, "grounded": {}}
             pre = (lambda iid: pre_state_by_instance[iid]) if cond == "tools" else (lambda iid: None)
+            # Circuit breaker: _ABORT_AFTER consecutive post-backoff sample losses
+            # means the provider (or this key/model) is down for the count — stop
+            # burning ~10 min of backoff per remaining sample, mark the rest
+            # missing, and let the completeness report drive a surgical top-up.
+            consec_failed = 0
+            aborted = False
             for inst in instances:
+                if aborted:
+                    break
                 truth = truth_by_instance[inst.instance_id]
                 recs: list[dict] = []
                 for s in range(args.samples):
@@ -542,13 +734,28 @@ def run_sweep(args) -> dict:
                             inst.instance_id, s, temp,
                             pre_state=pre(inst.instance_id))
                     except _ModelCallFailed as e:
+                        consec_failed += 1
                         print(f"[SKIP] {model} {cond} {inst.instance_id} s{s}: {e}",
                               flush=True)
                         results_fh.write(json.dumps(
                             {"kind": "model_call_failed", "model": model,
                              "condition": cond, "instance": inst.instance_id,
                              "sample": s, "error": str(e)}) + "\n")
+                        if consec_failed >= _ABORT_AFTER:
+                            aborted = True
+                            print(f"[ABORT] {model} @ {cond}: {consec_failed} "
+                                  f"consecutive samples failed after full backoff — "
+                                  f"provider down; skipping its remaining work. "
+                                  f"Re-run the missing cells via completeness.json "
+                                  f"+ --include.", flush=True)
+                            results_fh.write(json.dumps(
+                                {"kind": "model_aborted", "model": model,
+                                 "condition": cond,
+                                 "after_instance": inst.instance_id,
+                                 "consecutive_failures": consec_failed}) + "\n")
+                            break
                         continue
+                    consec_failed = 0
                     total_cost += cost["usd"]
                     if raw is not None:
                         responses_fh.write(json.dumps(
@@ -574,7 +781,18 @@ def run_sweep(args) -> dict:
                          "instance": inst.instance_id, "split": inst.split,
                          "class": inst.cls, "sample": s, **d}) + "\n")
                 per_split[inst.split][inst.instance_id] = recs
+                collected.setdefault(f"{model} @ {cond}", {})[inst.instance_id] = len(recs)
             model_records[(model, cond)] = per_split
+
+    # 2b) completeness report — incomplete paid data must be LOUD, never silent.
+    # (The 2026-06-11 Gemini 503 runs looked finished until post-hoc inspection;
+    # this makes expected-vs-collected a first-class artifact of every run.)
+    completeness = _completeness_report(models, conditions, instances,
+                                        args.samples, collected)
+    (out_dir / "completeness.json").write_text(
+        json.dumps(completeness, indent=2) + "\n", encoding="utf-8")
+    if models != ["fake"] or completeness["incomplete_cells"]:
+        _print_completeness(completeness, args)
 
     # 3) baselines (model-free), per split. modal_by_class needs the per-class GT.
     # modal_by_class SKIPS singleton-class instances (floor undefined there — it
@@ -608,6 +826,10 @@ def run_sweep(args) -> dict:
         "models": {},
         "baselines": {},
     }
+    # A summary built from an incomplete run carries the stain in its manifest —
+    # downstream tooling (dashboard, results docs) must be able to refuse it.
+    summary["manifest"]["data_complete"] = completeness["complete"]
+    summary["manifest"]["incomplete_cells"] = completeness["incomplete_cells"]
     splits = [s for s in ("templated", "grounded") if any(
         i.split == s for i in instances)]
     # model rows are keyed "model @ condition" so the no_tools/tools contrast is
@@ -788,6 +1010,12 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0,
                     help="cap total instances (pre-flight smoke; e.g. --limit 1 "
                          "for the mandatory single-call sanity check per provider)")
+    ap.add_argument("--include", default="",
+                    help="comma-separated instance_ids to run EXCLUSIVELY — the "
+                         "surgical top-up mode for an incomplete run (paste the "
+                         "ids from its completeness.json; keep --split/"
+                         "--n-generated/--seed identical to the original run so "
+                         "the instance set and prompts match).")
     ap.add_argument("--exclude", default="blackhole",
                     help="comma-separated grounded scenario names to EXCLUDE. "
                          "Default 'blackhole' (freeze gate 2026-06-10: CONTRIVED — "
@@ -810,12 +1038,21 @@ def main() -> None:
                          "the degenerate one-instance-per-class ceiling). DEFAULT ON "
                          "(audit 2026-06-10 K1); --no-coarsen-class only for "
                          "diagnostics — never for reported figures.")
+    ap.add_argument("--max-output-tokens", type=int, default=4000,
+                    dest="max_output_tokens",
+                    help="output-token budget for the anthropic/vllm call paths "
+                         "(default 4000 = the 2026-06-10 freeze value; raise for "
+                         "models that hard-truncate, e.g. Sonnet 4.6 at 12000). "
+                         "Recorded in the run manifest.")
     ap.add_argument("--det-runs", type=int, default=2, dest="det_runs",
                     help="in-sweep oracle determinism check: compute the ground "
                          "truth this many times per instance and require "
                          "byte-identical results (>=2; 0/1 disables — the full "
                          ">=10x gate remains scripts/verify_determinism.py).")
     args = ap.parse_args()
+
+    global MAX_OUTPUT_TOKENS
+    MAX_OUTPUT_TOKENS = args.max_output_tokens
 
     if any(MODEL_REGISTRY.get(m.strip(), {}).get("paid") for m in args.models.split(",")):
         if args.oracle != "batfish":

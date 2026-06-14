@@ -6,8 +6,8 @@ so no single run lands a clean 55/55 — but the UNION of the post-freeze runs d
 This pools those runs and selects exactly N=5 valid samples per instance,
 deterministically, then computes the headline stats with the SAME two-stage
 aggregator the sweep uses (netbrace.reporting.sweep_aggregate) — no hand-rolled
-metrics. It writes a run-format dir that scripts/build_dashboard.py merges as the
-LATEST (authoritative) Gemini source, superseding the partial per-run numbers.
+metrics. It writes a run-format dir that downstream tooling merges as the LATEST
+(authoritative) Gemini source, superseding the partial per-run numbers.
 
 Why pooling is valid HERE (and disclosed in the paper caveats): the prompt was
 frozen at commit a317f3d (2026-06-10). All three source runs post-date the freeze,
@@ -81,7 +81,7 @@ def main() -> None:
         aggregate_scenario_level(dmg)["macro_f1"] if dmg else None)
     stats["n_damage_instances"] = len(dmg)
 
-    # 4) write the run-format dir build_dashboard will merge as latest.
+    # 4) write the run-format dir downstream tooling merges as latest.
     OUT.mkdir(parents=True, exist_ok=True)
     summary = {
         "manifest": {

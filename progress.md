@@ -191,8 +191,7 @@ the first new failure class end-to-end.
   (noc-veteran drives + questions everything; industry-expert; scenario-author;
   batfish-oracle-engineer; sim-builder; research-standards-reviewer;
   red-team-critic). Skills re-homed to proper format + new `/scenario-gate`.
-  CLAUDE.md rewritten; private planning notes consolidated
-  (moved to `temporary/`).
+  CLAUDE.md rewritten; private planning notes moved to `temporary/`.
 - **Catalog audit (fleet):** noc-veteran + industry-expert audited the 20-scenario
   catalog. Result + synthesis in `paper/refs/catalog_audit_2026-06-08.md`; locked
   v1 roster in `paper/refs/v1_question_base_plan.md` (scope = "deterministic
@@ -584,10 +583,6 @@ verdict in `paper/refs/scrutiny_2026-06-09.md`:
   baseline). Target HotNets 2026 (deadline JULY 16). Need an independent human for the
   oracle-validity study; generate held-out variants for ≥2-3 other mechanisms; add one
   OSPF/IGP-underlay scenario (static next-hop resolution is non-idiomatic).
-- **Director deck built:** `paper/NetHELM_director_briefing.pptx` (13 slides + speaker
-  notes; trust-gate business framing; honest about stage; ask = small sweep budget +
-  sanctioned time + start the Deep-Network-Model data-release conversation post-demo).
-  Built via `scripts/build_director_deck.py` (python-pptx).
 
 ## Day 22 — 2026-06-10 — Fresh fleet audit + Plan-#1 harness fixes + 3 new generators
 
@@ -832,3 +827,138 @@ $9.41, Google $4.13 today). 60/60 instances 10×-determinism-gated first.
 v1 experimental payload is DONE. Remaining for the paper: κ validity study (needs the
 independent human/co-author — the gated $100-300 scale-up waits on it), prose draft,
 figures, arXiv. Landscape citation currency + D8 public-budget grounding already done.
+
+## Day 24 — 2026-06-13 — GRADER ARTIFACT FOUND + FIXED; TR REWRITTEN (the gauntlet worked)
+
+**The headline D7=0.00 was a grader artifact.** /critique (4 agents) on the TR draft
+→ red-team proved every D7 truth key is a hidden /32 probe while the prompt asks for
+`<CIDR>` and sets.py is exact-string intersection; models DID catch the blackholes
+(Haiku emitted the exact leaked /25s 5/5; frontier emitted spine2//24 5/5). D4 16/16
+and D10 8/16 keys likewise. Verified first-hand before acting.
+
+**Fix (all free, from saved artifacts):** semantic grader (graders/semantic_sets.py,
+frozen spec docs/semantic_grading_spec_v1.md, /25-canonical RATIFIED by oracle agent;
+37 new tests, suite 633 green) + full regrade of 810 samples + floors under BOTH
+graders (scripts/regrade_semantic.py → runs/regrade_semantic_20260613_000737/,
+report paper/refs/regrade_semantic_2026-06-12.md). Reproduction gates 755/755 +
+339/339 exact. Floors invariant-at-chance (max move syn_diff 0.007→0.023); identity
+on D1/D2/D8/D9; FSA identical.
+
+**The honest result (better paper):** loud/quiet split, not 1st/2nd-order. Frontier
+catches BOTH grounded blackholes 10/10 (incl. 2nd-order clos ECMP); quiet half missed:
+templated reroutes 57/60 zero on waypoint+intent, D9 ≤0.18, D10 ≤0.12, FSA 0/810.
+Frontier macro 0.48–0.51, mid 0.27–0.39, floors ≤0.02/≤0.08. D7 "FPs" = D3/D7
+taxonomy double-labels (reach=1.0 same samples), disclosed; v1.1 contract item.
+
+**TR fully rewritten** (new title "The Quiet Half of the Blast Radius"), figures
+rebuilt from regrade artifacts (build_tr_figures.py now reads regrade summary),
+compiles via tectonic. 2nd-pass gauntlet (red-team + standards) verified every new
+number; their fixes applied (≤0.18, floor-claim precision, calibration-FP wording,
+explicit/emergent consistency, fig caption, ipc3 names, freeze-timeline, 0.075).
+
+**OPEN BLOCKER (user):** Sonnet 12k-cap re-run (run_sweep --max-output-tokens added;
+sanity-checked; launched detached) died 12/55 samples in: ANTHROPIC API CREDITS
+EXHAUSTED. The partial run already shows Sonnet solving clos 5/5 semantically →
+the 4k-cap Sonnet row (0.35, below Haiku) is refuted by our own artifacts → DO NOT
+SUBMIT until re-run completes (needs ~$5 credit top-up; top-up cmd in
+runs/sonnet_rerun_12k_20260613.log) or Sonnet is dropped to appendix. Punch list:
+verify+add PeeringLLM-Bench (AINTEC'25) + Hong survey cites; commit frozen
+spec+grader to git BEFORE regrade artifacts (freeze auditability); user line-by-line
+read. Spend today: $0.71 (sanity $0.08 + partial rerun $0.63). arXiv logistics
+verified: endorsement = personal endorser only (Jan'26 policy), Sat/Sun submit →
+Mon 20:00 ET announce, non-exclusive license, AI disclosure required, HotNets Jul 16
+preprint-safe (ACM policy).
+
+## Day 24 (cont.) — 2026-06-13 — Sonnet 12k re-run + THESIS REFRAME (gauntlet caught a 2nd inversion)
+
+$20 Anthropic top-up unblocked the Sonnet 12k-cap re-run. Sanity ($0.07) → full
+grounded 55-sample run at 12k (sweep_20260613_093307): **0 invalid** (vs 6 at 4k),
+$2.64. Consolidated regrade via new `regrade_semantic.py --sonnet-grounded-dir`
+(guarded; truth byte-identical to 4k = determinism PASS; repro 755/755 + floors
+339/339): runs/regrade_semantic_20260613_101508. Sonnet grounded now 0.42 (was 0.35
+truncated), **D7† 0.97** (reads both blackholes near-frontier), D2 0.77, invalid 0 —
+moved above Haiku, top of lower tier (not frontier). Table 2/appendix/figures/F1/F3/F4/
+disclosure(ii) all updated; spend → ~$29.
+
+**Citations:** verified+added PeeringLLM-Bench (AINTEC'25, Mendoza&Ocampo) + Hong
+survey (IJNM'25, corrected first author Jibum Hong). Scoop = gap intact.
+
+**THE BIG ONE — final gauntlet (4 lenses) caught a thesis inversion, same class as
+the D7 artifact:** the "quiet half = D9 control-plane withdrawals ≤0.18 + D10 intent
+≤0.12 MISSED by all six" claim was FALSE. Those are active-convention DIMENSIONAL
+MEANS dragged down by taxonomy-boundary FALSE POSITIVES (models over-predict D7/D9/D10
+on ~3/6/8 of 11 grounded instances). Where each dim IS truth, RECALL is HIGH: masked
+withdrawal (ipc3_static D9) 1.00×4/0.80/0.60; lockout (mgmt_lockout D10) 1.00×3/0.76/
+0.20/0.00; explicit LOCAL_PREF bypass (lp_waypoint D4) 1.00×6. The GENUINE miss = the
+trace-less **silent reroute** (leak_ms_reroute templated, 57/60 zero on waypoint+intent)
++ aggregate-intent (ipc_aggregate). Verified directly against per-instance data.
+
+**Reframe applied everywhere** (abstract, intro C3, F2, F3, Table 2 → now RECALL-where-
+truth ‡ cols, discussion, conclusion, heatmap+gradient captions, fig_gradient
+repurposed to recall-where-truth, MODELS reordered Sonnet>Haiku): new thesis = "models
+catch damage that removes/blackholes a NAMEABLE OBJECT (withdrawal, lockout, blackhole,
+ECMP, explicit bypass — all caught); they miss damage where every object survives and
+only the PATH silently shifts (the leak-induced reroute)." Sharper + airtight + the
+title still holds. Re-gauntlet (red-team+trace+consistency) running to confirm.
+
+**Lesson (memory):** active-convention per-dimension MEANS conflate precision+recall;
+for a DETECTION/"blind spot" claim use RECALL-where-truth, not the dimensional mean —
+or false-positive over-prediction inverts the conclusion. Same trap as the /32 grader
+artifact, one layer up. Spend this session ~$3.4 (sanity+sonnet+partial). Remaining:
+apply re-gauntlet fixes, recompile, user line-by-line read, git-commit spec/grader
+(ASK), arXiv account+endorsement.
+
+## Day 24 (cont. 2) — 2026-06-13 — frontier reroute extension + gauntlet #3 → SHIP-READY
+
+Final gauntlet (after the reframe) flagged the headline silent-reroute miss rested on
+the 2 WEAKEST models only (templated split = Haiku+mini). Extended it: ran the 6-instance
+reroute class on Opus 4.8 + Sonnet 4.6 (runs/sweep_20260613_110402, $3.30; OPENAI/GEMINI
+keys absent this session so GPT-5.5/Gemini deferred). RESULT (frontier-backed, sharper):
+the frontier does NOT escape, it drops sharply — both-zero (waypoint AND intent = 0)
+Opus 21/30, Sonnet 18/30, combined w/ Haiku 27 + mini 30 = **96/120**; mean reroute F1
+low+high-variance (Opus waypoint 0.26±0.25 — one instance 0.73, so report both-zero
+FRACTION as the robust stat, F1 as n=6 point estimate). Folded into abstract/intro/F3/
+Protocol/Limitations/conclusion.
+
+3rd gauntlet (red-team+consistency): 0 blockers, numbers reproduce to the digit, consistency
+= SHIP. Fixed its 2 majors + minors: (1) variance suppression → lead with both-zero
+fractions, F1 ±std + n=6 caveat, "collapses"→"drops sharply"; (2) Anthropic-only frontier
+→ explicit in abstract/intro/F3 + Limitations cross-vendor note (1st camera-ready item);
+cost $29→$32; Table 2 D9/D10 appendix-ref→fig:heatmap; re-added fig:heatmap+fig:gradient
+\ref's (my F3 rewrite had dropped them). Compiles clean, all refs resolve.
+
+**STATE: paper ship-ready** (3 gauntlets passed, every number traces, thesis honest+
+frontier-backed). pdf paper/draft/netbrace_tr.pdf. Session spend ~$6.1 (sanity $0.14 +
+sonnet12k $2.64 + reroute $3.30), well under the $20 topup.
+
+**REMAINING = user only:** (1) line-by-line read (own every claim); (2) APPROVE git commit
+of spec/grader/tests (not committed — ask-gate); (3) arXiv account+endorsement (critical
+path — personal endorser w/ ≥3 cs.* papers, see [[arxiv-publishing-logistics]]); (4) OPTIONAL:
+export OPENAI_API_KEY + GEMINI_API_KEY so I can run GPT-5.5/Gemini on the reroute (cross-vendor,
+~$8) → removes the only disclosed limitation on the headline.
+
+## Day 24 (cont. 3) — 2026-06-13 — open-weight models (DeepSeek + Kimi) + cross-vendor reroute finding
+
+**HEADLINE CHANGE (cross-vendor reroute):** GPT-5.5 CATCHES the silent reroute (waypoint
+F1 0.64, both-zero 1/30) while Opus (21/30), Sonnet (18/30), Gemini (16/16 partial),
+Haiku (27/30), mini (30/30) miss it. The reroute is NOT a universal frontier blind spot —
+it SEPARATES the fleet (only GPT-5.5 reads it). This kills the old "frontier collapses on
+the reroute / 96-120 across 4 models" framing (artifact of Anthropic-only sampling).
+STRONGER paper: graduation-test now concrete (the hardest dim IS solvable), F4 anti-circularity
+demolished (OpenAI beats Anthropic on the Claude-built benchmark's hardest case), Anthropic-only
+limitation erased. REFRAME pending user title steer (rec: keep title, GPT-5.5 = the exception).
+
+**Open-weight models added (user funded: DeepSeek $10, Kimi $20):** wired into run_sweep.py
+as OpenAI-compatible providers (_call_oai_compat; registry entries deepseek/deepseek-v4-pro
+@ api.deepseek.com, kimi/kimi-k2.6 @ api.moonshot.ai/v1; keys in ~/.config/nethlm/keys.cfg).
+Endpoints probed: DeepSeek={v4-flash,v4-pro}, Kimi={k2.5,k2.6,k2.7-code}. Picked the flagships
+deepseek-v4-pro + kimi-k2.6. Sanity OK (both parse; DeepSeek $0.014/call, Kimi $0.043/call;
+both miss clos_summary, expected). Collecting grounded (55) + reroute (30) each = full peer
+coverage with the closed frontier models. ~$5 total, within caps.
+
+**Gemini reroute completion:** ScheduleWakeup hourly retry loop active (Gemini 503-throttled;
+16/30 so far, all miss; pools until 6 instances x 5 clean, then stops).
+
+**Pending integration (when open-model + gemini data lands):** regrade all 8 models -> update
+Table 2 / appendix / figures / fleet description; reframe the reroute (GPT-5.5 exception);
+re-gauntlet. NOT done yet — data collection in progress.
