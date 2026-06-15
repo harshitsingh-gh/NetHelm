@@ -300,9 +300,37 @@ def _fake_handauthored(scn) -> KeySets:
             ks["reachability"].add(_reach_key(s, d))
         for inv in scn.intent_invariants:
             ks["intent"].add(_intent_key(inv.kind, inv.src or "*", inv.dst))
-    elif name in ("square4", "ecmp4", "waypoint4"):
-        # static-route sanity anchors: not traps (D1 may legitimately be non-empty in
-        # real life, but for fake validation we keep D3 reachability as the effect).
-        for (s, d) in (scn.reachability_flows or [])[:1]:
-            ks["reachability"].add(_reach_key(s, d))
+    elif name == "ecmp4":
+        # D5 redundancy loss — the SOLE D5 instance. The live oracle fires
+        # `redundancy` (ECMP width drop) and leaves D3 EMPTY: reachability_flows here
+        # is a silent anchor (== redundancy_targets), NOT a reachability effect. The
+        # old branch emitted D3 instead, so the offline `--oracle fake` gate never
+        # exercised the redundancy keyset for the only scenario that validates it
+        # (audit 2026-06-15 design-lens M-1). Mirror the live oracle.
+        for (node, prefix) in (scn.redundancy_targets or []):
+            ks["redundancy"].add(
+                f"redundancy|node={canon_node(node)}|vrf=default|prefix={canon_prefix(prefix)}")
+    elif name == "waypoint4":
+        # D4 waypoint — NOT D3. The live oracle fires `waypoint` and leaves D3 empty
+        # (reachability_flows is the silent anchor). Old branch emitted D3, so the
+        # offline gate never tested D4 for this sole-D4 instance (design-lens M-2).
+        for (s, d, w) in (scn.waypoint_intents or []):
+            ks["waypoint"].add(
+                f"waypoint|src={canon_node(s)}|dst={canon_prefix(d)}|via={canon_node(w)}|vrf=default")
+    elif name == "square4":
+        # The blackhole-on-square4 scenario (scn.name="square4", scenario_blackhole.py).
+        # Removing r1's static to r4's loopback (10.0.0.4) both blackholes the data
+        # plane AND severs the loopback-sourced r1<->r4 iBGP session (both endpoints).
+        # Live oracle (radius corrected in commit c7c12c1): D1x2 + D2 + D3 + D7. The old
+        # D3-only branch was a stale simplification that broke the offline gate after
+        # the radius was fixed (design-lens M-5). This is a FIXED hand-authored scenario
+        # (frozen square4 baseline, no randomization), so the two session endpoints are
+        # stable literals; D2/D3/D7 derive from the forwarding flow.
+        ks["sessions"].add("bgp|vrf=default|node=r1|peer_ip=10.0.0.4")
+        ks["sessions"].add("bgp|vrf=default|node=r4|peer_ip=10.0.0.1")
+        for (s, d) in (scn.forwarding_flows or [])[:1]:
+            ks["prefixes"].add(_route_key(s, d))         # D2: r1 loses 10.0.0.4/32
+            ks["reachability"].add(_reach_key(s, d))     # D3
+            ks["forwarding"].add(                        # D7
+                f"anomaly|blackhole|node={canon_node(s)}|vrf=default|dst={canon_prefix(d)}")
     return ks

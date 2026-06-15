@@ -87,6 +87,43 @@ SCALE_DEAGG_LIVE = _full({
     },
 })
 
+# ecmp4 (registry key "ecmp"): the SOLE D5 instance. The live oracle fires D5
+# redundancy (ECMP width drop at src) and leaves D3 EMPTY. The old fake branch
+# emitted D3 instead, so the offline gate never tested D5 (design-lens M-1).
+ECMP4_LIVE = _full({
+    "redundancy": {
+        "redundancy|node=src|vrf=default|prefix=10.0.0.4/32",
+    },
+})
+
+# waypoint4 (registry key "waypoint"): D4 waypoint, D3 empty. Old branch emitted D3
+# (design-lens M-2).
+WAYPOINT4_LIVE = _full({
+    "waypoint": {
+        "waypoint|src=src|dst=10.0.0.4/32|via=way|vrf=default",
+    },
+})
+
+# blackhole (registry key "blackhole", scn.name="square4"): removing r1's static to
+# r4's loopback severs the loopback-sourced r1<->r4 iBGP session (D1x2) AND blackholes
+# the data plane (D2+D3+D7). Old branch emitted D3-only (design-lens M-5; the radius
+# was corrected to D1x2+D2+D3+D7 in commit c7c12c1).
+SQUARE4_BLACKHOLE_LIVE = _full({
+    "sessions": {
+        "bgp|vrf=default|node=r1|peer_ip=10.0.0.4",
+        "bgp|vrf=default|node=r4|peer_ip=10.0.0.1",
+    },
+    "prefixes": {
+        "route|node=r1|vrf=default|prefix=10.0.0.4/32",
+    },
+    "reachability": {
+        "reach|src=r1|dst=10.0.0.4/32|vrf=default",
+    },
+    "forwarding": {
+        "anomaly|blackhole|node=r1|vrf=default|dst=10.0.0.4/32",
+    },
+})
+
 
 def _fake(name: str) -> dict[str, set[str]]:
     return {t: set(v) for t, v in fake_ground_truth(scenarios.build(name)).items()}
@@ -148,3 +185,42 @@ def test_scale_deagg_supernet_lost_on_both_nodes():
     }
     assert len(ks["prefixes"]) == 2, "supernet must be lost on BOTH nodes, not 1"
     assert all("100.64.0.0/16" in k for k in ks["prefixes"]), "only the /16, never a /24"
+
+
+# --------------------------------------------------------------------------- #
+# Design-lens M-1/M-2/M-5: the ("square4","ecmp4","waypoint4") branch used to emit
+# D3-only for the two SOLE-dimension validators (ecmp4=D5, waypoint4=D4) and the
+# corrected blackhole (D1x2+D2+D3+D7) — so the offline `--oracle fake` gate never
+# tested those dimensions. These pin the fix to the live oracle.
+# --------------------------------------------------------------------------- #
+def test_fake_ecmp4_matches_live_oracle():
+    assert _fake("ecmp") == ECMP4_LIVE
+
+
+def test_fake_waypoint4_matches_live_oracle():
+    assert _fake("waypoint") == WAYPOINT4_LIVE
+
+
+def test_fake_square4_blackhole_matches_live_oracle():
+    assert _fake("blackhole") == SQUARE4_BLACKHOLE_LIVE
+
+
+def test_ecmp4_fires_d5_redundancy_not_d3():
+    """The sole D5 instance must emit redundancy, with D3 reachability EMPTY."""
+    ks = fake_ground_truth(scenarios.build("ecmp"))
+    assert ks["redundancy"] == {"redundancy|node=src|vrf=default|prefix=10.0.0.4/32"}
+    assert not ks["reachability"], "ecmp4 fake GT must not emit D3 (the old offline-gate bug)"
+
+
+def test_waypoint4_fires_d4_not_d3():
+    """The sole D4 instance must emit waypoint, with D3 reachability EMPTY."""
+    ks = fake_ground_truth(scenarios.build("waypoint"))
+    assert ks["waypoint"], "waypoint4 must emit D4 waypoint"
+    assert not ks["reachability"], "waypoint4 fake GT must not emit D3 (the old bug)"
+
+
+def test_square4_blackhole_fires_full_radius_not_d3_only():
+    """The blackhole must emit D1x2 + D2 + D3 + D7, not the old D3-only simplification."""
+    ks = fake_ground_truth(scenarios.build("blackhole"))
+    assert len(ks["sessions"]) == 2, "D1 = both endpoints of the severed r1<->r4 session"
+    assert ks["prefixes"] and ks["forwarding"], "D2 + D7 must fire (were empty before the fix)"
