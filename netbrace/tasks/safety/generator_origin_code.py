@@ -1,53 +1,85 @@
 r"""Family-2 generator — ORIGIN-CODE TIEBREAK FLIP (the `origin_code` mechanism): a
 DUAL-ORIGIN customer prefix whose two copies reach `src` tied on LOCAL_PREF and
-AS_PATH length, so the BGP best-path decision falls to the ORIGIN step (RFC 4271 §9.1.1
-step 5: IGP < EGP < INCOMPLETE). The decisive change swaps ONE side's origination
-method between `network` (ORIGIN=igp) and `redistribute static` (ORIGIN=incomplete),
-flipping the ORIGIN ordering so the tie now goes to a LATENT STRICT MED that favors the
-bypass egress. No LOCAL_PREF, no AS_PATH, no prefix and no session is touched.
+AS_PATH length, so the BGP best-path decision falls to the ORIGIN step (RFC 4271
+§9.1.2.2 (b): lowest Origin number wins — IGP < EGP < INCOMPLETE). The decisive change
+swaps ONE side's origination method between `network` (ORIGIN=igp) and `redistribute
+static` (ORIGIN=incomplete), collapsing the ORIGIN tie so the decision falls THROUGH to
+the next §9.1.2.2 step — a LATENT MED — which favors the bypass egress. No LOCAL_PREF,
+no AS_PATH, no prefix and no session is touched.
 
 This is the hardest comparator in the quiet-half catalog (Family 2, BUILD_V1.1): unlike
 the Family-1 underlay-displacement mechanisms (IGP cost / redistribute-AD / next-hop
 elimination) the diff lives entirely in the BGP origination namespace, yet it is NOT a
 first-order LOCAL_PREF/AS_PATH edit a model catches by reflex — it is a `network` ↔
-`redistribute` swap whose only routing consequence is an ORIGIN-code change two
-best-path steps deep. The reader must know the RFC 4271 best-path order AND that
-`network` stamps ORIGIN=igp while `redistribute static` stamps ORIGIN=incomplete.
+`redistribute` swap whose only routing consequence is an ORIGIN-code change. The reader
+must know the RFC 4271 decision order AND that `network` stamps ORIGIN=igp while
+`redistribute static` stamps ORIGIN=incomplete (FRR docs, ipSpace "BGP Origin
+Attribute"; see knowledge/corpus/noc/origin_code_quiet_reroute.md).
 
-Mechanism (RFC 4271 §9.1.1 best-path order — LOCAL_PREF (step 2) > AS_PATH length
-(step 4) > ORIGIN (step 5) > MED (step 6, same-neighbor-AS only)): `src` learns the
-customer /24 over TWO eBGP paths that are byte-identical on LOCAL_PREF (default 100) and
-AS_PATH length (both [AS_egr], length 1, because `way` and `alt` ORIGINATE the prefix —
-they do not re-advertise a dst-originated copy), so no BGP attribute above ORIGIN can
-decide. The two paths differ ONLY in ORIGIN code and in a latent MED:
+Decision order (RFC 4271 §9.1.2.1 degree of preference = LOCAL_PREF, then §9.1.2.2
+"Breaking Ties (Phase 2)": (a) shortest AS_PATH > (b) lowest ORIGIN > (c) lowest MED,
+same-neighbor-AS only > ... > BGP Identifier/router-id last). `src` learns the customer
+/24 over TWO eBGP paths byte-identical on LOCAL_PREF (default 100) and AS_PATH length
+(both [AS_egr], length 1, because `way` and `alt` ORIGINATE the prefix — they do not
+re-advertise a dst-originated copy), so §9.1.2.2 (a) ties and the decision reaches (b)
+ORIGIN. The two paths differ ONLY in ORIGIN code (b) and in a latent MED (c):
 
   * PRE: the way-side copy is originated by `network` (ORIGIN=igp) and the alt-side by
-    `redistribute static` (ORIGIN=incomplete). igp < incomplete, so the way copy wins at
-    the ORIGIN step and src->customer transits the inspection node `way`. The latent MED
-    (way=200, alt=50) is NEVER consulted PRE because ORIGIN already decided.
+    `redistribute static` (ORIGIN=incomplete). igp < incomplete, so at §9.1.2.2 (b) the
+    way copy wins and src->customer transits the inspection node `way`. The latent MED
+    (way=200, alt=50) at step (c) is NEVER consulted PRE because (b) already decided.
   * DIFF (bypass): swap the deciding side's origination method (`network`↔`redistribute
-    static`) so BOTH copies become ORIGIN=incomplete. The ORIGIN step now TIES, and the
-    decision falls through to the MED step (RFC 4271 step 6). Because `way` and `alt`
-    advertise to `src` from the SAME neighboring AS (AS_egr), Batfish compares their MED
-    unconditionally (the always-/deterministic-med config is not even needed, and is
-    deliberately not emitted — it is unparseable on the pinned digest), and alt's 50 < 200
-    wins → src->customer silently bypasses `way`.
-  * POST/no_op: a `network`↔`redistribute` swap of the SAME KIND applied to an
-    IRRELEVANT prefix (the edited egress's OWN loopback /32), so the customer /24's
-    ORIGIN ordering is untouched, the way copy keeps its igp edge, and the best path
-    stays on `way`. Ground truth is COMPLETELY EMPTY.
+    static`) so BOTH copies become ORIGIN=incomplete. Step (b) now TIES, and the decision
+    falls THROUGH to the MED step §9.1.2.2 (c). HONEST ATTRIBUTION (audit M2): PRE the
+    ORIGIN step (b) is decisive; POST/bypass the ORIGIN step ties and the **MED step (c)
+    is the real POST discriminator** — the waypoint moves because alt's MED 50 < way's
+    200, NOT because of an ORIGIN inequality. The card is a two-attribute mechanism: an
+    ORIGIN flip that UNGATES a latent MED gap. (See the MED-relocation note below — the
+    MED is preserved across the swap, not removed.)
+  * POST/no_op: the SAME network↔redistribute origination-method swap of the CUSTOMER /24
+    on the SAME egress, but the redistribution route-map carries `set origin <pre-origin>`
+    (igp on the way side, incomplete on the alt side), so the customer copy's ORIGIN code
+    lands EXACTLY where it was PRE. Step (b) is unchanged, the best path stays on `way`,
+    and ground truth is COMPLETELY EMPTY. The no_op diff therefore NAMES the customer
+    prefix (in its prefix-list / origination lines) exactly as the bypass does — the two
+    twins are construction-parallel; only reading the `set origin` neutralizer (real
+    routing reasoning) tells them apart. (This closes the audit-M3 gameability tell, where
+    the OLD no_op edited the OWN loopback /32 and never mentioned the customer prefix, so a
+    purely syntactic "does the patch mention the customer prefix?" heuristic separated trap
+    from calibration with ZERO routing reasoning — 100% accurate, defeating the
+    calibration twin.)
 
-Why MED, not router-id, is the final discriminator (the falsified-tiebreak gate,
-docs/oracle_determinism_spec_v1.md / verified live on the pinned digest): once ORIGIN
-ties, the next BGP steps are MED (step 6), eBGP-over-iBGP (step 7, both eBGP → tie), and
-IGP-metric (step 8, directly-connected eBGP → tie); if nothing breaks the tie before
-router-id (step 9) Batfish installs an ECMP MULTIPATH, which fires D5 and KILLS D4. The
-SAME-neighbor-AS MED gap (way 200 vs alt 50) is the STRICT discriminator that resolves
-the decision BEFORE router-id is ever reached, in BOTH snapshots — exactly one best path
-at `src` each time, no ECMP tie, maximum-paths default 1. `bgp deterministic-med` /
-`bgp always-compare-med` are NOT modeled by the pinned Batfish digest (deterministic-med
-is unparseable) and are NOT emitted; the same-neighbor-AS comparison is unconditional, so
-it is exploited directly.
+Why the decision lands on MED, not router-id, once ORIGIN ties (the falsified-tiebreak
+gate, docs/oracle_determinism_spec_v1.md / verified live on the pinned digest): after
+§9.1.2.2 (b) ties, the next steps are (c) MED, then eBGP-over-iBGP (both eBGP → tie) and
+IGP-metric to NEXT_HOP (directly-connected eBGP → tie); if nothing breaks the tie before
+the BGP-Identifier/router-id step Batfish installs an ECMP MULTIPATH, which fires D5 and
+KILLS D4. The MED gap (way 200 vs alt 50) at step (c) is the STRICT discriminator that
+resolves the decision BEFORE router-id is reached, in BOTH snapshots — exactly one best
+path at `src` each time, no ECMP tie, maximum-paths default 1.
+
+MED COMPARABILITY — HONEST ACCOUNT (audit M2/M3). RFC 4271 §9.1.2.2 (c) says MED is
+"only comparable between routes learned from the same neighboring AS". The topology DOES
+satisfy that gate (both customer copies arrive at `src` from neighbor-AS AS_egr), so the
+mechanism is RFC-faithful. BUT the oracle does NOT depend on that gate: Batfish's
+best-path comparator compares MED UNCONDITIONALLY across ASes — `BgpRib.java:209` is a
+bare `Long.compare(lhs.getMetric(), rhs.getMetric())` with no same-leftmost-AS check
+(knowledge/corpus/batfish/batfish_verified_facts.md ~line 140; verified on master
+2026-06-14). `bgp deterministic-med` / `bgp always-compare-med` PARSE-and-DROP in the FRR
+dialect (zero handlers) and are deliberately NOT emitted. So do NOT claim Batfish honors a
+same-AS MED gate — it does not; the same-AS topology is for RFC realism, the oracle
+compares the MEDs regardless.
+
+MED-RELOCATION NOTE (audit M4 / FIX #4 — RESOLVED, NOT provisional). The bypass diff does
+NOT remove the MED. PRE the MED is set by an OUTBOUND route-map (`SET_MED_<role>`,
+`set metric <m>`, applied `neighbor ... route-map ... out`). POST/bypass the SAME `set
+metric <m>` is RELOCATED into the redistribution route-map (`REDIST_CUST`, `set metric
+<m>`). The advertisement to `src` still carries the identical MED (200 on way, 50 on alt)
+across the diff. So the bypass changes EXACTLY ONE routing-relevant attribute — the ORIGIN
+code — while holding LOCAL_PREF, AS_PATH, NEXT_HOP and MED constant. The latent MED that
+decides POST is the SAME MED that existed (but was un-consulted) PRE. Rendered and
+confirmed across seeds 600/601: `set metric` MOVES from `SET_MED_WAY`/`SET_MED_ALT` into
+`REDIST_CUST`; it is never deleted.
 
 THE QUIET SIGNATURE (D4 waypoint + D10 intent ONLY): a `network`/`redistribute` edit is
 not a session parameter and never resets a BGP FSM (RFC 4271 §8: Established exits only
@@ -69,9 +101,10 @@ two that the DUAL-ORIGIN itself requires, see below)::
 
   * `src` (AS_src) eBGP-peers DIRECTLY (over the /30 link IP, no update-source, no
     multihop) with both `way` (AS_egr) and `alt` (AS_egr). Both upstreams are the SAME
-    AS so the two customer paths `src` receives share neighbor-AS = AS_egr, which is what
-    makes the latent MED comparable (RFC 4271 step 6 compares MED only across
-    same-neighbor-AS paths).
+    AS so the two customer paths `src` receives share neighbor-AS = AS_egr, which makes
+    the latent MED RFC-comparable (RFC 4271 §9.1.2.2 (c): MED is compared only across
+    same-neighbor-AS paths). NB the oracle compares MED unconditionally regardless (see
+    the MED-comparability note above); the same-AS topology is for RFC realism.
   * `way`, `alt`, `dst`, `host` all live in AS_egr (one customer/egress AS). `way` and
     `alt` each ORIGINATE the customer /24 toward `src` — way via `network`, alt via
     `redistribute static` — so `src`'s two received paths have AS_PATH=[AS_egr], length 1
@@ -102,14 +135,17 @@ Structural axes (each a genuinely distinct config-reading task or a calibration 
         outcome class, opposite device + opposite rewrite, a distinct construct to read.
 
   * effect ∈ {bypass, no_op} — the calibration axis:
-      - bypass : the swap actually collapses the customer /24's ORIGIN ordering. D4+D10
-        fire; D1/D2/D3/D5/D7 = ∅. THE trap.
-      - no_op  : the SAME KIND of `network`↔`redistribute` swap applied to the edited
-        egress's OWN loopback /32 (an irrelevant prefix), leaving the customer /24's
-        ORIGIN ordering — and therefore the best path — untouched. Ground truth is
-        COMPLETELY EMPTY across ALL dimensions. The prose is indistinguishable in style
-        from a bypass edit; only careful best-path reasoning (which prefix's ORIGIN
-        actually moved) separates them.
+      - bypass : the swap actually collapses the customer /24's ORIGIN tie (§9.1.2.2 (b)),
+        ungating the latent MED (c). D4+D10 fire; D1/D2/D3/D5/D7 = ∅. THE trap.
+      - no_op  : the SAME network↔redistribute origination-method swap of the CUSTOMER /24
+        on the SAME egress, NEUTRALIZED by `set origin <pre-origin>` in the redistribution
+        route-map so the customer copy's ORIGIN code is unchanged — the best path stays on
+        `way`. Ground truth is COMPLETELY EMPTY across ALL dimensions. CRITICALLY the no_op
+        diff NAMES the customer prefix (its prefix-list + origination lines) exactly as the
+        bypass does, so a purely syntactic "does the patch touch the customer prefix?"
+        heuristic CANNOT separate trap from calibration (audit-M3 fix). Only reading the
+        `set origin` neutralizer and reasoning that `incomplete`/`igp` lands where it was
+        PRE separates them — genuine best-path reasoning, not pattern-matching.
 
 That is 2 knobs × 2 effects = 4 structural combos × seeds.
 
@@ -119,19 +155,21 @@ node base name are all drawn deterministically from the seed. Same seed ⇒ byte
 instance; different seed ⇒ a novel instance even for this public mechanism.
 
 Determinism contract (oracle_determinism_spec class STATIC-DET): every best-path decision
-is STRICT in both snapshots — PRE the ORIGIN gap (igp < incomplete) decides; POST/bypass
-the MED gap (50 < 200) decides at a step ABOVE router-id; POST/no_op nothing about the
-customer decision moves. Exactly one best path at `src` each time, no equal-cost ECMP
-tie, maximum-paths default 1. D4 is scored by ExtendedOracle._waypoint_diff as the
-all-traces-transit invariant; D10 by the matching kind="waypoint" IntentInvariant.
+is STRICT in both snapshots — PRE the ORIGIN step §9.1.2.2 (b) (igp < incomplete) decides;
+POST/bypass the ORIGIN step ties and the MED step §9.1.2.2 (c) (50 < 200) decides, ABOVE
+the BGP-Identifier/router-id step; POST/no_op nothing about the customer decision moves
+(the `set origin` neutralizer holds ORIGIN constant). Exactly one best path at `src` each
+time, no equal-cost ECMP tie, maximum-paths default 1. D4 is scored by
+ExtendedOracle._waypoint_diff as the all-traces-transit invariant; D10 by the matching
+kind="waypoint" IntentInvariant.
 
-LIVE-VERIFIED (pinned batfish/allinone:nethelm @ 09817554db90, light pass on network
-"netbrace_b23_origin_code"): PRE src best = igp via way (ORIGIN beats incomplete; MED
-200 ignored), trace src->way->dst->host; bypass swaps the deciding origination, both
-copies become incomplete, the same-neighbor-AS MED (alt 50 < way 200) wins, trace
-src->alt->dst->host; reachability preserved both ways; bypass combos -> {waypoint,
-intent} ONLY, no_op combos -> COMPLETELY EMPTY, bypass combos 3x byte-identical (the lead
-re-runs the authoritative 10x).
+LIVE-VERIFIED (pinned batfish/allinone:nethelm @ 09817554db90): PRE src best = igp via
+way (ORIGIN (b) beats incomplete; MED 200 not consulted), trace src->way->dst->host;
+bypass swaps the deciding origination, both copies become ORIGIN=incomplete, step (b) ties
+and the MED (c) (alt 50 < way 200) decides, trace src->alt->dst->host; reachability
+preserved both ways; bypass combos -> {waypoint, intent} ONLY, no_op combos -> COMPLETELY
+EMPTY across all dims, bypass combos 10x byte-identical. Re-verified post-FIX (set-origin
+neutralized no_op + MED-relocation honesty) in runs/oracle_verify_origin_code_fix_*.
 
 Public API mirrors generator_lp / generator_igp_metric:
     generate_origin_code_suite(n, base_seed=...)        -> list[Scenario]
@@ -359,18 +397,49 @@ def _src_config(topo: _Topo) -> str:
 # way / alt: AS_egr egresses that ORIGINATE the customer /24 toward src. The
 # origination METHOD (network=igp vs redistribute static=incomplete) is the KNOB;
 # the latent MED is carried toward src. Both static-route the /24 to dst (REQUIRED by
-# the dual-origin construction — see module docstring). The loopback is originated by
-# `network <lo>/32` by default; the no_op edit swaps THAT to `redistribute connected`.
+# the dual-origin construction — see module docstring). The OWN loopback is ALWAYS
+# originated by `network <lo>/32` (the no_op no longer touches it — see the audit-M3
+# gameability fix in the module docstring).
+#
+# Three customer-origination states (all carry the role's fixed MED toward src):
+#   * origin="network"           -> `network <cust>` + outbound SET_MED route-map.
+#                                   ORIGIN=igp. (PRE state of `way`.)
+#   * origin="redistribute"      -> `redistribute static route-map REDIST_CUST` whose
+#                                   route-map matches the /24 and `set metric <med>`.
+#                                   ORIGIN=incomplete. (PRE state of `alt`.)
+#   * origin_pin in {"igp",      -> `redistribute static route-map REDIST_CUST` whose
+#       "incomplete"}               route-map ALSO `set origin <origin_pin>` (+ the MED).
+#                                   This is the NEUTRALIZED no_op form: the customer /24
+#                                   is re-originated via redistribute (so the diff NAMES
+#                                   the customer prefix exactly like the bypass) but its
+#                                   ORIGIN code is PINNED to its PRE value, so the
+#                                   best-path is unchanged and the GT is EMPTY. `set
+#                                   origin igp/incomplete` is honored by the Batfish FRR
+#                                   model (live-verified on the pinned digest).
 # --------------------------------------------------------------------------- #
 def _egress_config(topo: _Topo, role: str, *, origin: str, med: int,
-                   loop_via_redist: bool) -> str:
+                   origin_pin: Optional[str] = None, restate_redist: bool = False) -> str:
     """Render way/alt.
 
     ``origin`` ∈ {"network", "redistribute"} controls how the CUSTOMER /24 is
-    originated (igp vs incomplete). ``med`` is the MED set toward src on the customer
-    advertisement. ``loop_via_redist`` (the no_op state) originates the OWN loopback /32
-    via `redistribute connected` instead of `network <lo>/32` (an irrelevant-prefix
-    swap that does not touch the customer /24's ORIGIN ordering).
+    originated (igp vs incomplete) when ``origin_pin`` is None. ``med`` is the MED set
+    toward src on the customer advertisement (carried identically in either form, so the
+    MED is PRESERVED across a method swap — see the MED-relocation note in the docstring).
+
+    ``origin_pin`` (the NEUTRALIZED no_op state) overrides: the customer /24 is
+    originated via `redistribute static` with the route-map carrying BOTH `set origin
+    <origin_pin>` and `set metric <med>`, so the customer copy's ORIGIN code is pinned to
+    ``origin_pin`` regardless of the redistribute default (incomplete). Used to render a
+    customer-prefix origination-method swap that is best-path-NEUTRAL (the ORIGIN lands
+    where it was PRE), which keeps the no_op diff construction-parallel to the bypass
+    while leaving the oracle EMPTY.
+
+    ``restate_redist`` renumbers the customer prefix-list seq (5 -> 10). It is only used by
+    the alt no_op (a same-method redistribute restatement): with the seq renumbered, the
+    diff removes the old `ip prefix-list CUST_PL seq 5 permit <cust>` and adds a new `seq
+    10` line, so even a same-method restatement produces a customer-prefix-NAMING +/- diff
+    (construction-parallel to the bypass). It is best-path-neutral (the prefix-list still
+    permits exactly the customer /24).
     """
     p = topo.params
     lo = topo.loopback[role]
@@ -385,36 +454,31 @@ def _egress_config(topo: _Topo, role: str, *, origin: str, med: int,
     # static` has something to inject) AND forwardable to dst->host.
     body.append(f"ip route {topo.customer_prefix} {topo.ip[('dst', role)]}\n")
 
-    if origin == "network":
+    use_network = (origin == "network") and (origin_pin is None)
+    if use_network:
         # ORIGIN=igp. MED set via an outbound route-map toward src (named per role so
         # the two devices read distinctly).
         rm = f"SET_MED_{role.upper()}"
         body.append(f"route-map {rm} permit 10\n set metric {med}\n!\n")
-    else:  # redistribute static -> ORIGIN=incomplete
-        # The redistribution route-map matches the customer /24 and stamps the MED.
+    else:  # redistribute static (origin=incomplete by default, or pinned via origin_pin)
+        # The redistribution route-map matches the customer /24, optionally pins ORIGIN
+        # (the neutralized no_op), and stamps the MED.
+        _cust_seq = 10 if restate_redist else 5
         body.append(
-            f"ip prefix-list CUST_PL seq 5 permit {topo.customer_prefix}\n!\n")
-        body.append(
-            f"route-map REDIST_CUST permit 10\n"
-            f" match ip address prefix-list CUST_PL\n"
-            f" set metric {med}\n!\n")
-
-    if loop_via_redist:
-        # no_op state: originate the OWN loopback /32 via redistribute connected.
-        body.append(f"ip prefix-list LOOP_PL seq 5 permit {lo}/32\n!\n")
-        body.append(
-            f"route-map REDIST_LOOP permit 10\n"
-            f" match ip address prefix-list LOOP_PL\n!\n")
+            f"ip prefix-list CUST_PL seq {_cust_seq} permit {topo.customer_prefix}\n!\n")
+        rm_lines = [f"route-map REDIST_CUST permit 10",
+                    f" match ip address prefix-list CUST_PL"]
+        if origin_pin is not None:
+            rm_lines.append(f" set origin {origin_pin}")
+        rm_lines.append(f" set metric {med}")
+        body.append("\n".join(rm_lines) + "\n!\n")
 
     body.append(f"router bgp {p.egr_asn}\n")
     body.append(f" bgp router-id {lo}\n")
     body.append(f" neighbor {topo.ip[('src', role)]} remote-as {p.src_asn}\n")
     body.append(" !\n address-family ipv4 unicast\n")
-    if loop_via_redist:
-        body.append("  redistribute connected route-map REDIST_LOOP\n")
-    else:
-        body.append(f"  network {lo}/32\n")
-    if origin == "network":
+    body.append(f"  network {lo}/32\n")
+    if use_network:
         body.append(f"  network {topo.customer_prefix}\n")
         body.append(
             f"  neighbor {topo.ip[('src', role)]} route-map SET_MED_{role.upper()} out\n")
@@ -459,10 +523,8 @@ def _host_config(topo: _Topo) -> str:
 # `redistribute static` (ORIGIN=incomplete, MED 50). way wins at the ORIGIN step.
 # --------------------------------------------------------------------------- #
 def _baseline_configs(topo: _Topo) -> dict[str, str]:
-    way = _egress_config(topo, "way", origin="network", med=_MED_WAY,
-                         loop_via_redist=False)
-    alt = _egress_config(topo, "alt", origin="redistribute", med=_MED_ALT,
-                         loop_via_redist=False)
+    way = _egress_config(topo, "way", origin="network", med=_MED_WAY)
+    alt = _egress_config(topo, "alt", origin="redistribute", med=_MED_ALT)
     return {
         topo.name["src"]: _src_config(topo),
         topo.name["way"]: way,
@@ -473,55 +535,80 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
-# The change. A `network`↔`redistribute` origination-method swap on ONE egress.
-# The change target is `way` for knob=way_to_incomplete, `alt` for knob=alt_to_igp.
-# bypass swaps the CUSTOMER /24 origination (flips the decisive ORIGIN); no_op swaps
-# the OWN-LOOPBACK origination (leaves the customer ORIGIN ordering intact).
+# The change. ALWAYS a customer-/24 origination edit on ONE egress (the change_target:
+# `way` for knob=way_to_incomplete, `alt` for knob=alt_to_igp). BOTH effects edit the
+# CUSTOMER prefix (closing the audit-M3 gameability tell — the no_op no longer hides on
+# the loopback):
+#   * bypass : swap the customer /24 origination method (`network`↔`redistribute static`)
+#              WITHOUT an ORIGIN pin -> the ORIGIN code FLIPS (igp<->incomplete), the
+#              §9.1.2.2 (b) tie collapses, and the latent MED (c) decides -> waypoint moves.
+#   * no_op  : re-originate the customer /24 via `redistribute static` with the route-map
+#              carrying `set origin <pre-origin>` so the ORIGIN code is PINNED to its PRE
+#              value -> best-path-NEUTRAL. The no_op diff names the customer prefix exactly
+#              like the bypass (same prefix-list + origination lines), so a syntactic
+#              "does the patch touch the customer prefix?" heuristic cannot separate them.
+# Directionality (why the two effects render differently per knob):
+#   * way (PRE customer via `network`/igp): bypass -> redistribute (incomplete);
+#     no_op -> redistribute + `set origin igp` (a REAL method swap, neutralized to igp).
+#   * alt (PRE customer via `redistribute`/incomplete): bypass -> `network` (igp);
+#     no_op -> redistribute + `set origin incomplete` with the prefix-list seq renumbered
+#     (a redistribute RESTATEMENT, neutralized — alt cannot become `network` without
+#     turning igp and thus moving the winner, so the neutral form keeps it redistribute).
+# In all four cases the change_target is the SAME node and ONLY the customer origination
+# construct moves; the OWN loopback `network <lo>/32` is untouched.
 # --------------------------------------------------------------------------- #
 def _change_target(spec: OriginCodeSpec) -> str:
     return "way" if spec.knob == "way_to_incomplete" else "alt"
 
 
 def _egress_config_for(topo: _Topo, role: str, *, customer_as_redistribute: bool,
-                       loop_via_redist: bool) -> str:
-    """Render a given egress in an arbitrary origination state.
+                       origin_pin: Optional[str] = None, restate_redist: bool = False) -> str:
+    """Render a given egress in an arbitrary customer-origination state.
 
-    ``customer_as_redistribute`` True => customer /24 via `redistribute static`
-    (incomplete); False => via `network` (igp). The MED is the role's fixed MED so the
-    advertisement carries the same MED regardless of origination method.
+    ``customer_as_redistribute`` True => customer /24 via `redistribute static`; False =>
+    via `network`. ``origin_pin`` (the neutralized no_op) pins the redistribute ORIGIN to
+    "igp"/"incomplete". ``restate_redist`` renumbers the customer prefix-list seq (5->10)
+    so a same-method redistribute restatement still produces a customer-naming +/- diff
+    (used by the alt no_op). The MED is the role's fixed MED in every form, so the
+    advertised MED is PRESERVED across any swap.
     """
     med = _MED_WAY if role == "way" else _MED_ALT
     origin = "redistribute" if customer_as_redistribute else "network"
-    return _egress_config(topo, role, origin=origin, med=med,
-                          loop_via_redist=loop_via_redist)
+    return _egress_config(topo, role, origin=origin, med=med, origin_pin=origin_pin,
+                          restate_redist=restate_redist)
 
 
 def _apply_change(topo: _Topo) -> str:
     spec = topo.spec
     role = _change_target(spec)
 
-    # PRE state of the edited egress:
-    #   way (knob1): customer via `network` (igp);  alt (knob2): customer via
-    #   `redistribute static` (incomplete). Loopback via `network <lo>/32` in both.
-    way_is_network_pre = True   # way originates customer via network PRE
-    alt_is_network_pre = False  # alt originates customer via redistribute PRE
-    pre_customer_redist = (not way_is_network_pre) if role == "way" else (not alt_is_network_pre)
+    # PRE state of the edited egress's CUSTOMER origination:
+    #   way (knob1): via `network` (igp);  alt (knob2): via `redistribute static`
+    #   (incomplete). The OWN loopback is `network <lo>/32` in every state.
+    pre_customer_redist = (role == "alt")  # alt originates customer via redistribute PRE
     before = _egress_config_for(topo, role,
-                                customer_as_redistribute=pre_customer_redist,
-                                loop_via_redist=False)
+                                customer_as_redistribute=pre_customer_redist)
 
     if spec.effect == "bypass":
-        # Swap the CUSTOMER /24 origination method -> flip its ORIGIN code.
+        # Swap the CUSTOMER /24 origination method WITHOUT an origin pin -> the ORIGIN
+        # code flips (igp<->incomplete) and the §9.1.2.2 (b) tie collapses -> MED decides.
         after = _egress_config_for(topo, role,
-                                   customer_as_redistribute=(not pre_customer_redist),
-                                   loop_via_redist=False)
+                                   customer_as_redistribute=(not pre_customer_redist))
+    elif role == "way":
+        # no_op (way): network(igp) -> redistribute static + `set origin igp`. A REAL
+        # method swap, neutralized so the ORIGIN stays igp -> best path unchanged. The
+        # diff removes `network <cust>` and adds the prefix-list + redistribute (both
+        # naming the customer prefix) -> construction-parallel to the bypass.
+        after = _egress_config_for(topo, role, customer_as_redistribute=True,
+                                   origin_pin="igp")
     else:
-        # no_op: swap the OWN-LOOPBACK origination method (network -> redistribute
-        # connected). The customer /24 origination is unchanged -> ORIGIN ordering and
-        # the best path are untouched.
-        after = _egress_config_for(topo, role,
-                                   customer_as_redistribute=pre_customer_redist,
-                                   loop_via_redist=True)
+        # no_op (alt): redistribute(incomplete) -> redistribute + `set origin incomplete`
+        # with the prefix-list seq renumbered. A same-method restatement, neutralized so
+        # the ORIGIN stays incomplete -> best path unchanged. The seq renumber re-emits a
+        # customer-prefix-naming prefix-list line in the diff -> the no_op diff NAMES the
+        # customer prefix (closing the audit-M3 tell) while remaining best-path-neutral.
+        after = _egress_config_for(topo, role, customer_as_redistribute=True,
+                                   origin_pin="incomplete", restate_redist=True)
 
     if before == after:
         raise RuntimeError(
@@ -541,12 +628,16 @@ def _unified(before: str, after: str, node: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Prose (CONFIG EDIT + INTENT ONLY — never the routing OUTCOME). bypass and no_op are
-# phrased the SAME way: the prose names only WHICH egress's origination method is
-# swapped between `network` and `redistribute`, never whether the best path moves or
-# which ORIGIN code results. The forbidden-outcome lint (test_generator_family1) bars
-# bypass/reroute/no-longer/wins/loses/best-path/etc; config-construct words
-# (network, redistribute, prefix-list, metric) ARE allowed — they name what is edited.
+# Prose (CONFIG EDIT + INTENT ONLY — never the routing OUTCOME). BOTH effects edit the
+# CUSTOMER prefix's origination on the same egress, so the prose names only WHICH
+# construct is rewritten (`network` / `redistribute static` / prefix-list / route-map /
+# `set origin` / `set metric`), never whether the best path moves, which ORIGIN code
+# results, or whether the edit is neutral. CRUCIAL: the no_op prose must NOT betray its
+# neutrality (no "unchanged", "no effect", etc.) — the model must DERIVE neutrality from
+# the diff (the `set origin` pin) by routing reasoning, not be told. The forbidden-outcome
+# lint (test_generator_family1) bars bypass/reroute/no-longer/wins/loses/best-path/etc;
+# config-construct words (network, redistribute, prefix-list, metric, origin) are allowed —
+# they name what is edited.
 # --------------------------------------------------------------------------- #
 def _description(topo: _Topo) -> str:
     spec = topo.spec
@@ -554,25 +645,33 @@ def _description(topo: _Topo) -> str:
     rname = topo.name[role]
     asn = topo.params.egr_asn
     if spec.effect == "bypass":
-        # The customer prefix's origination method is swapped (network<->redistribute).
+        # Swap the customer prefix's origination method (network<->redistribute static).
         if spec.knob == "way_to_incomplete":
-            edit = ("swap the customer prefix's origination on this router from a "
-                    "`network` statement to a `redistribute static` statement (with a "
-                    "matching prefix-list + route-map)")
+            edit = ("re-originate the customer prefix on this router via a `redistribute "
+                    "static` statement (matched by a prefix-list + route-map that carries "
+                    "the existing metric) in place of its `network` statement")
         else:  # alt_to_igp
-            edit = ("swap the customer prefix's origination on this router from a "
-                    "`redistribute static` statement (matched by a prefix-list + "
-                    "route-map) to a `network` statement")
+            edit = ("re-originate the customer prefix on this router via a `network` "
+                    "statement in place of its `redistribute static` statement (the "
+                    "prefix-list + route-map that carried the metric)")
         return (
-            f"On `{rname}` (AS{asn}), {edit} (a one-construct origination-method "
-            f"change). See the diff."
+            f"On `{rname}` (AS{asn}), {edit} — a one-construct origination edit. "
+            f"See the diff."
         )
-    # no_op: swap the OWN-loopback /32 origination method (same construct kind).
+    # no_op: re-originate the SAME customer prefix via redistribute static with an
+    # explicit `set origin` in the route-map (construct terms only — neutrality NOT stated).
+    if spec.knob == "way_to_incomplete":
+        edit = ("re-originate the customer prefix on this router via a `redistribute "
+                "static` statement whose route-map carries `set origin igp` (plus the "
+                "existing metric, matched by a prefix-list) in place of its `network` "
+                "statement")
+    else:  # alt_to_igp
+        edit = ("rewrite the customer prefix's `redistribute static` origination on this "
+                "router so its route-map carries an explicit `set origin incomplete` "
+                "(plus the existing metric), re-listing the prefix in the prefix-list")
     return (
-        f"On `{rname}` (AS{asn}), swap the router's own loopback /32 origination from "
-        f"a `network` statement to a `redistribute connected` statement (matched by a "
-        f"prefix-list + route-map) — a one-construct origination-method change. See "
-        f"the diff."
+        f"On `{rname}` (AS{asn}), {edit} — a one-construct origination edit. "
+        f"See the diff."
     )
 
 

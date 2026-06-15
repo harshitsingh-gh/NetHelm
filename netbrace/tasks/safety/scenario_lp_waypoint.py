@@ -1,5 +1,11 @@
 """lp_waypoint — Class 5: LOCAL_PREF-driven waypoint (D4) shift; the empty-blast trap.
 
+⚠️ LEGACY / NON-CANONICAL (audit 2026-06-15 finding #14): this registered scenario
+reuses the DEPRECATED static-crutch `baseline_lp_waypoint` (see its header). The
+CANONICAL, PUBLISHED LOCAL_PREF-waypoint path the model sweep scores is the
+idiomatic all-eBGP `generator_lp.generate_lp_suite`. This scenario is kept only for
+registry / determinism-gate continuity; do not treat it as the published base.
+
 Reuses the verified `lp_waypoint` BGP baseline (internal AS65000 src/way/alt +
 external customer AS65004 dst, dual-homed via way and alt). Pre-state: an inbound
 eBGP route-map on `way` sets local-preference 200 on all routes learned from dst

@@ -132,17 +132,40 @@ this one is the recursive-resolution variant grounded on vendor/design documenta
 2. The egress next-hop `/32` MUST be **suppressed behind the `area range`** so the
    summary is the LPM resolver at the ingress (verified: `routes(src, <egress>/32)` rows
    = 0). If the `/32` leaks, it (not the summary) resolves the next-hop and the
-   summary-cost edit is vacuous.
+   summary-cost edit is vacuous. **CRITICAL (caught 2026-06-15): the egress must NOT
+   advertise its own loopback into BGP (`network <egress-lo>/32`).** If it does, the `/32`
+   leaks via iBGP — `routes(src, <egress>/32)` shows it as `proto=ibgp` and it resolves
+   the BGP next-hop directly, making the `area range` suppression VACUOUS even though the
+   summary itself parses and installs. The generator drops the egress `network <lo>/32`
+   and lets the loopback reach the core via OSPF area 0 only, so the range genuinely
+   suppresses it (re-verified: `routes(src, <egress>/32)` = 0 rows, only the `ospfIA`
+   supernet present).
 3. Use the **bare `area N range A.B.C.D/M cost C` form** on the pinned digest. The
    FRR-current idiomatic `advertise cost C` form is UNRECOGNIZED on the 11-month digest
    (re-verify on any digest bump); `default-information originate` is UNRECOGNIZED
-   (the default-route flavour is NOT gradeable in this FRR dialect).
+   (the default-route flavour is NOT gradeable in this FRR dialect). The bare form PARSES
+   with ZERO init issues — re-confirmed 2026-06-15 (an earlier `generator_igp_summary`
+   docstring had FALSELY claimed it was "PARTIALLY_UNRECOGNIZED" and shipped a bare
+   `ip ospf cost` interface knob instead; that was the B2 audit bug — the generator was
+   rebuilt to use the real `area range cost` knob).
 4. Assert a **strict** resolved inter-area cost gap and exactly one installed next-hop in
-   BOTH snapshots (verified: equal cost → nh-count = 2 → D5 LOUD).
+   BOTH snapshots (verified: equal cost → nh-count = 2 → D5 LOUD). The metric math is
+   simple: the configured `cost C` OVERRIDES the computed Type-3 metric (the ABR's
+   backbone interface cost is irrelevant — verified 2026-06-15), and src's inter-area
+   metric = (src→ABR interface cost, equal+default on both legs) + (that ABR's `cost C`).
+   So the strict gap reduces to `C_wabr != C_babr` in each snapshot; the generator
+   randomizes C per-seed while preserving the strict-gap chain.
 5. Include a **no_op calibration control**: a summary-cost edit that does NOT cross the
    gap (waypoint ABR still wins) — prose-indistinguishable from the bypass, ground truth
    empty — to prove a passing model reasoned about recursive resolution rather than
-   pattern-matching on "an OSPF cost line changed."
+   pattern-matching on "an OSPF cost line changed." The PRE snapshot is byte-identical
+   across all four combos (same baseline summary costs), so the pre-state alone cannot
+   classify bypass vs no_op.
+6. **Live-verified end-to-end 2026-06-15** (pinned `batfish/allinone:nethelm @
+   09817554db90`, seed base 500): both bypass combos fire D4 waypoint + D10 intent ONLY
+   (D1/D2/D3/D5/D7=∅), both no_op combos are COMPLETELY EMPTY, 8/8 BGP sessions
+   ESTABLISHED in every snapshot, both bypass combos 10× byte-identical. Artifact:
+   `runs/oracle_verify_igp_summary_fix_20260615/igp_summary.json`.
 
 ## Related
 - `igp_metric_hotpotato_quiet_reroute.md` — the link-metric sibling (best-path step-(e),

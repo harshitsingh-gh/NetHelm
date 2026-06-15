@@ -127,20 +127,66 @@ def test_egress_uses_routemap_nexthop_not_bare_next_hop_self():
     assert "next-hop-self" not in cfg, "must not rely on bare next-hop-self"
 
 
+def _ospf_costs_per_iface(src_cfg: str) -> dict[str, int]:
+    """Parse src's PRE config into {iface: ospf_cost}. eth1=way side, eth2=alt side."""
+    out: dict[str, int] = {}
+    cur: str | None = None
+    for raw in src_cfg.splitlines():
+        line = raw.strip()
+        if line.startswith("interface "):
+            cur = line.split()[1]
+        elif line.startswith("ip ospf cost ") and cur is not None:
+            out[cur] = int(line.split()[-1])
+    return out
+
+
 def test_ibgp_over_loopbacks_and_strict_cost_gap():
+    # The costs are drawn per-seed (contamination control), so we parse them and assert
+    # the STRICT gap invariant, never a literal value (no hardcoded fingerprint).
     scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass"))
     src_cfg = scn.pre_configs[scn.nodes[0]]
     assert "update-source lo" in src_cfg                # iBGP over loopbacks
-    # baseline: way side strictly cheaper than alt side (10 < 100)
-    assert "ip ospf cost 10" in src_cfg and "ip ospf cost 100" in src_cfg
+    costs = _ospf_costs_per_iface(src_cfg)
+    # exactly the two underlay interfaces carry an ospf cost (eth1=way, eth2=alt)
+    assert set(costs) == {"eth1", "eth2"}, costs
+    # baseline: way side (eth1) STRICTLY cheaper than alt side (eth2) so way wins PRE
+    assert costs["eth1"] < costs["eth2"], costs
+
+
+def _patch_cost_edit(patch: str) -> tuple[int, int]:
+    """Parse a single-line `ip ospf cost` swap patch -> (removed_pre, added_post)."""
+    removed = added = None
+    for line in patch.splitlines():
+        if line[:3] in ("---", "+++") or "ip ospf cost" not in line:
+            continue
+        if line.startswith("-"):
+            removed = int(line.split()[-1])
+        elif line.startswith("+"):
+            added = int(line.split()[-1])
+    assert removed is not None and added is not None, patch
+    return removed, added
 
 
 def test_two_knobs_edit_two_distinct_interfaces():
-    raise_way = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass")).patch
-    lower_alt = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("lower_alt", "bypass")).patch
-    # raise_way edits the way-side interface up to 200; lower_alt edits the alt-side down to 5
-    assert "+ ip ospf cost 200" in raise_way
-    assert "+ ip ospf cost 5" in lower_alt
+    # Costs are per-seed; assert INVARIANTS (raise/lower direction + crossing the PRE
+    # gap + distinct edited interfaces), never literal values.
+    rw_scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass"))
+    la_scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("lower_alt", "bypass"))
+    # The PRE alt/way costs from the (shared seed) src config.
+    pre = _ospf_costs_per_iface(rw_scn.pre_configs[rw_scn.nodes[0]])
+    way_pre, alt_pre = pre["eth1"], pre["eth2"]
+
+    rw_removed, rw_added = _patch_cost_edit(rw_scn.patch)
+    la_removed, la_added = _patch_cost_edit(la_scn.patch)
+
+    # raise_way is a RAISE that crosses ABOVE the PRE alt cost (so alt now wins).
+    assert rw_added > rw_removed, ("raise_way must raise", rw_removed, rw_added)
+    assert rw_removed == way_pre and rw_added > alt_pre, (rw_removed, rw_added, way_pre, alt_pre)
+    # lower_alt is a LOWER that drops BELOW the PRE way cost (so alt now wins).
+    assert la_added < la_removed, ("lower_alt must lower", la_removed, la_added)
+    assert la_removed == alt_pre and la_added < way_pre, (la_removed, la_added, alt_pre, way_pre)
+    # The two edits touch DIFFERENT interfaces: their removed (pre) costs differ.
+    assert rw_removed != la_removed, (rw_removed, la_removed)
 
 
 # --------------------------------------------------------------------------- #

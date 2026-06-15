@@ -1012,9 +1012,12 @@ batfish_frr_gradeability_boundary.
 
 **Family 1 (recursive underlay displacement) — 4/4 mechanisms BUILT + LIVE-VALIDATED + TESTED:**
 - `generator_igp_metric.py` (flagship; one `ip ospf cost` line, zero BGP surface)
-- `generator_igp_summary.py` (ABR Type-3 summary metric; 5-node multi-area; `area range cost`
-  is Batfish-PARTIALLY_UNRECOGNIZED so realized via the ABR backbone `ip ospf cost` per RFC 2328
-  12.4.3 — distinctness vs flagship is a design-review note)
+- `generator_igp_summary.py` (ABR Type-3 summary metric; multi-area; **REBUILT 2026-06-15** to use
+  the REAL `area 0 range <supernet>/M cost C` knob — live-verified on the pinned digest to PARSE
+  clean, SUPPRESS the egress /32, and flip the next-hop, so the eg-lo /32 is genuinely masked → a
+  distinct mechanism, not a near-clone of the flagship. The earlier "`area range cost` is
+  PARTIALLY_UNRECOGNIZED" claim was FALSE — only the `... advertise cost` variant is unrecognized.
+  See the 2026-06-15 validity-audit entry below.)
 - `generator_redistribute_ad.py` (OSPF AD 110 evicts iBGP AD 200; zero BGP surface)
 - `generator_nexthop_elim.py` (next-hop-self removal -> unresolvable -> win by elimination; strict
   baseline MED discriminator dodges the router-id/ECMP trap; no_op has a positional tell -> red-team note)
@@ -1024,3 +1027,53 @@ re-validated by the lead on a fresh seed base. Artifacts: `runs/oracle_verify_ig
 `runs/oracle_verify_family1_20260614/`. Tests: 696 passed / 1 skipped (+63 new; frozen core untouched).
 NOT committed (working tree). NEXT: Families 2-3 (comparator wedge + projection), then wire the
 generators into the suite/registry + sweep (data collection, additive).
+
+## Day — 2026-06-15 — Aggressive scenario-validity audit + remediation
+
+**Ran a full multi-expert validity gauntlet over ALL 24 scenario families** (13 new quiet/reroute
+generators + 11 loud/baseline), via a dynamic fleet workflow: per-family oracle-gradeability +
+design-correctness review → adversarial cross-examination of every blocking/major finding →
+cross-family distinctness + coverage synthesis. Report: `paper/refs/scenario_validity_audit_2026-06-15.md`
+(structured data in the `.json`). Headline: the **13 reroutes are not yet in the published question
+base** (`build_generated_suite_multi` ships only ipc/leak/lp/scale), so their defects were
+pre-publication, not result-corrupting. Two prior runs were voided by session-limit cutoffs (the
+"all VALID" output was a false-clean artifact — fixed the compaction so an unreviewed family reports
+`NOT_REVIEWED`, never a fake VALID). Durable lesson recorded in memory `feedback_workflow_checkpointing`.
+
+**Fixes landed (working tree; tests 777→789 passed, 1 skipped; frozen v0 core untouched):**
+- **B1 — square4 `remove_network` false-quiet (v0 oracle has no D9 term):** corrected the wrong docs
+  (`batfish_oracle_runbook.md`, `project_guide.md`) + added `tests/unit/test_v0_remove_network_guard.py`
+  pinning the shipped suite as `shut_neighbor`-only. Frozen generator deliberately not edited
+  (golden rule #1); the trap is neutralized via doc + guard, gradeable form = `ipc` (D9).
+- **B2 — `igp_summary` mis-attribution:** empirically proved on the live pinned digest that bare
+  `area range cost` IS modeled + suppresses the /32 (KB was right, docstring was wrong) → REBUILT to
+  the real summarization, reconciled KB/corpus/catalog, oracle re-verified PASS.
+- **M2 — false MED-comparability rationale** (Batfish compares MED unconditionally, `BgpRib.java:209`):
+  fixed in `med_far_as`, `remove_dead_prepend` (incl. its determinism contract), `origin_code`.
+- **M3/#6 — `origin_code`:** authored the missing grounding card (honestly mechanism-grounded),
+  closed the 100%-accurate prefix-mention gameability tell (no_op now also touches the customer prefix,
+  GT stays empty + deterministic), resolved the provisional cause-flag (bypass RELOCATES the MED, so
+  ORIGIN is the sole changed attribute).
+- **M6 — `blackhole`:** docstring + registration comment + catalog S15 corrected from "quiet D7+D3"
+  to the verified **D1×2+D2+D3+D7** (the removed static also severs the loopback-sourced iBGP peering);
+  the D3+D7 overlap documented as deliberate.
+- **M7/#15 — fake-oracle vs live disagreement:** `clos_summary` anomaly moved to the dropping node
+  (spine2) + the specific /24 D2 loss added; `leak_ms` confirmed-buggy → `null_routed`@leaker;
+  `scale_deagg` D2 now both nodes (2 rows). New `tests/unit/test_fake_oracle_pinning.py` pins fake==live.
+- **M11 — contamination fingerprint:** randomized the hardcoded `{10,100,200,5,300}` OSPF costs per-seed
+  in BOTH Family-1 generators (`igp_metric`, `igp_summary`), strict-gap invariant preserved
+  (6000/6000 seeds), pre-cost classification leak closed.
+- **M5 (partial):** `verify_determinism.py` now stamps the report with the Batfish digest + pybatfish
+  version; committed-suite `engine_version` back-fill left undone (frozen-hash) and documented.
+- **M4:** RFC tie-break citations fixed across all reroute generators ("§9.1.2.2 step 6" →
+  "§9.1.2.2 (Breaking Ties, Phase 2) item (e)").
+- **#14 `lp_waypoint`:** deprecation notes mark the static-crutch `scenario_/baseline_lp_waypoint`
+  non-canonical; the published path is the all-eBGP `generator_lp`.
+- **#16:** NDSS "42,654 unique invalid prefixes" verified verbatim from the PDF; the RPKI grounding
+  card's two FABRICATED quotes replaced with the paper's actual sentences; FAISS index rebuilt.
+
+**Flagged, NOT autonomously doable:** κ≥0.7 human-validation (#3, needs labelers — standing blocker
+before any number ships); a second design-lens review of the loud half (#4, single-lens today);
+net-new missing-class generators (#17 — RPKI/ROV grounding written + indexed, generator unbuilt).
+**Distinctness (#9):** the quiet half is ~6 decision surfaces × 2 axes, not 13 mechanisms — record as
+"decision-step diversity," and count square4 as 1 mechanism × 12 permutations, IF/when they enter the TR.

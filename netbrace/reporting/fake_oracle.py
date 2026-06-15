@@ -47,6 +47,22 @@ def _intent_key(kind: str, src: str, dst: str) -> str:
     return f"intent|kind={kind}|src={canon_node(src)}|dst={canon_prefix(dst)}"
 
 
+def _longest_non_host_prefix(prefixes) -> str | None:
+    """The MOST-SPECIFIC (longest mask) non-/32 watched prefix.
+
+    The hand-authored ``cust`` heuristic (``next reversed ... not endswith /32``)
+    picks the LAST-listed non-host prefix, which is wrong when a watch set lists a
+    covering aggregate AFTER the specific (clos_summary watches the specific
+    10.3.0.0/24 then the /8 summary; reversed -> the /8). The blast lands on the
+    specific the summary MASKS, so we select by longest mask, with the network
+    address as a deterministic tie-break. Mirrors the live oracle, which loses the
+    SPECIFIC /24 from the leaf RIBs (the /8 is ADDED, never in D2)."""
+    nets = [p for p in (prefixes or []) if not p.endswith("/32")]
+    if not nets:
+        return None
+    return max(nets, key=lambda p: (int(p.rsplit("/", 1)[1]), p))
+
+
 def _parse_gen_label(name: str) -> dict:
     """gen_ipc_k<k>-<filtered>-<dir>-<prefix>-<match>_s<seed> -> axis dict."""
     body = name[len("gen_ipc_"):].rsplit("_s", 1)[0]
@@ -222,10 +238,17 @@ def _fake_handauthored(scn) -> KeySets:
             ks["intent"].add(_intent_te_key(inv.src or "*", inv.dst))
             ks["prefixes"].add(_route_key(inv.src or tgt, inv.dst))
     elif name == "leak_ms":
-        # forwarding blackhole + reachability loss; D1/D2 empty.
+        # D3 reachability loss at the flow SOURCE (transit) + D7 forwarding anomaly
+        # at the DROPPING node (the leaker, scn.change_target), NOT the source —
+        # the more-specific /25 leak pulls transit's traffic to the leaker by LPM
+        # and it is null-routed THERE (the leaker's discard static). Live oracle:
+        # node=leaker, kind=null_routed (NOT blackhole). D1/D2 stay empty (the leak
+        # ADDS a prefix, so nothing is "lost"). The change_target IS the leaker, so
+        # the dropping node is derived from the scenario, not a name literal. This
+        # now matches the generated twin (_fake_gen_leak, which uses `leaker`).
         for (s, d) in (scn.forwarding_flows or [])[:1]:
             ks["forwarding"].add(
-                f"anomaly|blackhole|node={canon_node(s)}|vrf=default|dst={canon_prefix(d)}")
+                f"anomaly|null_routed|node={canon_node(tgt)}|vrf=default|dst={canon_prefix(d)}")
             ks["reachability"].add(_reach_key(s, d))
     elif name == "lp_waypoint":
         # only D4 waypoint fires.
@@ -233,16 +256,41 @@ def _fake_handauthored(scn) -> KeySets:
             ks["waypoint"].add(
                 f"waypoint|src={canon_node(s)}|dst={canon_prefix(d)}|via={canon_node(w)}|vrf=default")
     elif name == "clos_summary":
-        for (s, d) in (scn.forwarding_flows or [])[:1]:
+        # D7 forwarding anomaly at the DROPPING node (spine2 = scn.change_target),
+        # NOT the flow source: the summary masks spine2's missing path, so the ECMP
+        # path via spine2 null-routes the server host. AND D2: the SPECIFIC /24
+        # (the longest non-/32 watched prefix; the /8 summary is ADDED, never in D2)
+        # leaves the RIBs of the two REMOTE leaves AND spine2. The remote leaves are
+        # the forwarding-flow sources EXCEPT the trailing negative-control source
+        # (leaf3, which serves the host connected and is listed last by authoring
+        # convention). Derived from the scenario object, no node-name literals.
+        specific = _longest_non_host_prefix(scn.watched_prefixes)
+        flows = scn.forwarding_flows or []
+        for (s, d) in flows[:1]:
             ks["forwarding"].add(
-                f"anomaly|null_routed|node={canon_node(s)}|vrf=default|dst={canon_prefix(d)}")
+                f"anomaly|null_routed|node={canon_node(tgt)}|vrf=default|dst={canon_prefix(d)}")
+        if specific:
+            remote_leaves = [s for (s, _d) in flows[:-1]]  # drop the trailing neg control
+            for node in remote_leaves + [tgt]:
+                ks["prefixes"].add(_route_key(node, specific))
     elif name == "scale_deagg":
-        # D2 supernet swap + D8 scale overflow on the edge.
+        # D8 scale overflow on the budgeted node(s) + the D2 supernet SWAP. The
+        # benign loss signal is the covering /16 supernet (the SHORTEST-mask non-/32
+        # watched prefix) leaving BOTH nodes' RIBs — the upstream stops originating
+        # it and the edge stops learning it (live oracle: 2 rows, edge AND upstream,
+        # not 1). The constituent /24s are ADDED, not lost, so they never appear in
+        # D2. Derived from the scenario: the supernet by shortest mask, the two
+        # losing nodes = scn.nodes (no name literals).
         for node, limits in (scn.resource_limits or {}).items():
             for res in limits:
                 ks["scale"].add(f"scale|node={canon_node(node)}|resource={res}")
-        if cust:
-            ks["prefixes"].add(_route_key(tgt, cust))
+        supernet = None
+        nets = [p for p in scn.watched_prefixes if not p.endswith("/32")]
+        if nets:
+            supernet = min(nets, key=lambda p: (int(p.rsplit("/", 1)[1]), p))
+        if supernet:
+            for node in scn.nodes:
+                ks["prefixes"].add(_route_key(node, supernet))
     elif name == "mgmt_lockout":
         # mgmt-plane lockout: D1/D2 empty (the watched set survives); each managed
         # device's mgmt path is a D3 reachability loss AND a D10 management-

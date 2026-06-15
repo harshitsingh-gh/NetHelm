@@ -21,7 +21,12 @@ gate itself non-re-runnable. Per-scenario isolation is the verified-clean mode.
 A known transient Batfish flake ("Work terminated abnormally") is retried once
 with a fresh network name before a scenario is declared FAILED.
 
-One artifact: ``runs/determinism_<ts>/report.json``.
+One artifact: ``runs/determinism_<ts>/report.json`` — now carries an ``engine``
+fingerprint (Batfish image digest + pybatfish version) so the determinism claim is
+auditable against a specific engine (audit 2026-06-15 finding M5). NOTE: the frozen
+committed v0 suite's per-task ``oracle.engine_version`` is still ``None`` (it is never
+set, and back-filling it would change the frozen suite hash); the digest pin therefore
+lives in this report header, not in the committed task records.
 
 Requires a running Batfish (default 127.0.0.1) and the [oracle] extra.
 
@@ -35,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -59,6 +65,35 @@ def _key_sets_sha(result) -> str:
 def _full_sha(result) -> str:
     """sha256 over the full canonical JSON (catches payload drift too)."""
     return hashlib.sha256(to_json(result).encode("utf-8")).hexdigest()
+
+
+def _engine_fingerprint() -> dict:
+    """Pin the engine stack so "same configs -> same GT" is auditable against a
+    specific Batfish (audit 2026-06-15 finding M5). All ground truth is only valid
+    against the pinned digest; record it (+ the pybatfish client) in the report."""
+    fp: dict = {}
+    # Batfish image digest — the load-bearing pin. Try the pinned tag, then the
+    # running container's image, then `docker images` as a last resort.
+    digest = ""
+    for cmd in (
+        ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", "batfish/allinone:nethelm"],
+        ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", "batfish"],
+    ):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            digest = (out.stdout or "").strip()
+            if digest:
+                break
+        except Exception:  # noqa: BLE001 — docker may be absent in CI; degrade gracefully
+            continue
+    fp["batfish_image"] = digest or "UNKNOWN (docker inspect failed)"
+    # pybatfish client version.
+    try:
+        import pybatfish  # noqa: PLC0415
+        fp["pybatfish_version"] = getattr(pybatfish, "__version__", "unknown")
+    except Exception as e:  # noqa: BLE001
+        fp["pybatfish_version"] = f"unknown ({e})"
+    return fp
 
 
 def _gate_one(scn, host: str, runs: int) -> dict:
@@ -113,6 +148,9 @@ def main() -> int:
                     help="base seed for --generated (must match the sweep's --seed)")
     args = ap.parse_args()
 
+    engine = _engine_fingerprint()
+    print(f"engine: batfish={engine['batfish_image']}  pybatfish={engine['pybatfish_version']}")
+
     scns = [scenarios.build(name) for name in sorted(scenarios.REGISTRY)]
     if args.generated:
         # Same multi-mechanism suite the sweep scores (run_sweep.build_instances).
@@ -156,6 +194,7 @@ def main() -> int:
         "timestamp": ts,
         "host": args.host,
         "runs": args.runs,
+        "engine": engine,  # batfish digest + pybatfish version (audit M5: pin the engine)
         "all_pass": all_pass,
         "n_pass": n_pass,
         "n_total": len(rows),

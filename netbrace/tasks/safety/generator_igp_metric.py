@@ -10,8 +10,9 @@ catch). Here the decisive change lives entirely in the IGP (OSPF), and acts THRO
 the recursive next-hop resolution of a BGP route whose every attribute AND best-path
 identity is byte-stable across the diff.
 
-Mechanism (RFC 4271 §9.1.2.2 step 6 — "prefer the path whose BGP NEXT_HOP is reachable
-at lower IGP metric"; FRR bgp_path_info_cmp igp-metric step): `src` learns the
+Mechanism (RFC 4271 §9.1.2.2 (Breaking Ties, Phase 2) item (e) — "prefer the path whose
+BGP NEXT_HOP is reachable at lower IGP metric"; §9.1.2.2 uses lettered items, not
+numbered steps; FRR bgp_path_info_cmp igp-metric step): `src` learns the
 customer /24 over iBGP from BOTH `way` and `alt` with BYTE-IDENTICAL BGP attributes
 (same LOCAL_PREF, same AS_PATH = [AS_dst], same ORIGIN, same MED, both iBGP). No BGP
 attribute can decide, so best-path falls through to the IGP-metric tiebreak, resolving
@@ -57,19 +58,24 @@ AS, eBGP to the customer AS)::
   * way and alt each eBGP-learn the customer /24 from dst and re-advertise it to src
     over iBGP, rewriting the NEXT_HOP to their OWN loopback via an outbound route-map
     `set ip next-hop <lo>`. src resolves that loopback recursively through OSPF, so the
-    chosen egress is decided by the OSPF cost to the loopback (RFC 4271 step 6).
+    chosen egress is decided by the OSPF cost to the loopback (RFC 4271 §9.1.2.2 item (e)).
   * src applies NO BGP policy; the two received paths are attribute-tied. The change
     edits ONE `ip ospf cost` value on src — zero BGP-namespace surface.
 
 Structural axes (each a genuinely distinct config-reading task or a calibration
-control — NOT a clone):
+control — NOT a clone). The cost values below (10/100/200/5) are ILLUSTRATIVE only;
+the actual OSPF costs are drawn per-seed (see _draw_link_costs) preserving the strict
+gap `way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised`, so the
+edited interface's pre-cost alone CANNOT classify bypass vs no_op:
 
   * knob ∈ {raise_way, lower_alt} — two DIFFERENT OSPF cost edits that both flip the
     egress off the waypoint, each on a different src interface / opposite direction:
-      - raise_way : baseline cost(src->way)=10 < cost(src->alt)=100 (way wins); the
-        change RAISES src's cost toward way to 200, so alt now wins (100 < 200).
-      - lower_alt : same baseline; the change LOWERS src's cost toward alt to 5, so alt
-        now wins (5 < 10). Same outcome, opposite edit, different interface to read.
+      - raise_way : baseline cost(src->way)=way_pre < cost(src->alt)=alt_pre (way wins);
+        the change RAISES src's cost toward way to way_raised (> alt_pre), so alt now
+        wins (illustratively 10 < 100, raised to 200 > 100).
+      - lower_alt : same baseline; the change LOWERS src's cost toward alt to alt_lowered
+        (< way_pre), so alt now wins (illustratively raised-side 5 < 10). Same outcome,
+        opposite edit, different interface to read.
 
   * effect ∈ {bypass, no_op} — the calibration axis:
       - bypass : the edit actually flips the recursive resolution. D4+D10 fire;
@@ -84,7 +90,11 @@ That is 2 knobs × 2 effects = 4 structural combos × seeds.
 
 Per-seed randomization (contamination control, exactly like generator_lp): the core
 ASN, the customer-AS ASN, the loopback block, the link /30 supernet, the customer /24,
-and the node base name are all drawn deterministically from the seed.
+the node base name, AND the six OSPF cost values (_draw_link_costs, a strict-gap-
+preserving 6-strictly-increasing-value draw) are all drawn deterministically from the
+seed. Randomizing the costs per-seed removes the hardcoded {10,100,200,5,300}
+contamination/memorization fingerprint and ensures the edited interface's pre-cost
+alone does not classify bypass vs no_op.
 
 Determinism contract (oracle_determinism_spec class STATIC-DET): every best-path
 decision is STRICT at the IGP-metric step in both snapshots (a real, non-equal OSPF
@@ -119,16 +129,6 @@ AXES = {
     "knob": KNOB_VALUES,
     "effect": EFFECT_VALUES,
 }
-
-# Baseline OSPF costs on src's two underlay interfaces. way strictly cheaper PRE.
-_COST_WAY_PRE = 10
-_COST_ALT_PRE = 100
-# Post values (chosen to keep a STRICT gap in the post snapshot too).
-_COST_WAY_RAISED = 200   # raise_way/bypass: 200 > 100 -> alt wins
-_COST_ALT_LOWERED = 5    # lower_alt/bypass: 5 < 10  -> alt wins
-_COST_ALT_RAISED = 300   # raise_way/no_op: 100->300, way (10) still wins (inert)
-_COST_WAY_LOWERED = 5    # lower_alt/no_op: 10->5,  way still wins (inert)
-
 
 @dataclass(frozen=True)
 class IgpMetricSpec:
@@ -174,6 +174,66 @@ _ROLES = ("src", "way", "alt", "dst")
 
 
 @dataclass(frozen=True)
+class _LinkCosts:
+    """The randomized-but-fixed-per-seed `ip ospf cost` values on src's two underlay
+    interfaces, with the strict-gap invariant PRESERVED in both snapshots.
+
+    Baseline (both snapshots' PRE): way_pre < alt_pre (strict) so the way side wins.
+    bypass edits cross the gap (flip the winner); no_op edits widen the existing margin
+    in the inert direction (winner unchanged). The six values are STRICTLY increasing:
+
+        way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+
+    so the edited interface's pre-cost (way_pre or alt_pre) ALONE cannot classify bypass
+    vs no_op — exactly the memorization fingerprint the per-seed draw removes.
+    """
+
+    way_pre: int        # baseline cost on src->way (the winner PRE)
+    alt_pre: int        # baseline cost on src->alt (the loser PRE)
+    way_raised: int     # raise_way/bypass: way -> this (> alt_pre) -> alt wins (flip)
+    alt_lowered: int    # lower_alt/bypass: alt -> this (< way_pre) -> alt wins (flip)
+    alt_raised: int     # raise_way/no_op:  alt -> this (> alt_pre) -> way still wins (inert)
+    way_lowered: int    # lower_alt/no_op:  way -> this (< way_pre) -> way still wins (inert)
+
+
+def _draw_link_costs(rng: random.Random) -> _LinkCosts:
+    """Draw a strict-gap-preserving set of `ip ospf cost` constants from ``rng``.
+
+    OSPF cost is 1..65535 on FRR; we keep values comfortably inside [2, ~9000] with
+    strict margins so every snapshot has a non-equal underlay metric gap (no ECMP/D5)
+    and the four edits land where the docstring claims:
+
+        way_pre  <  alt_pre                          (PRE: way wins, strict)
+        way_raised  >  alt_pre   (+ strict margin)   (bypass: alt wins)
+        alt_lowered <  way_pre   (- strict margin)   (bypass: alt wins)
+        alt_raised  >  alt_pre   (+ strict margin)   (no_op: way still wins, strict)
+        way_lowered <  way_pre   (- strict margin)   (no_op: way still wins, strict)
+        alt_lowered != way_lowered (the two "low" values are distinct from each other)
+
+    The two "low" (below-way_pre) values need 2 distinct slots in [2, way_pre-1], so
+    way_pre is drawn high enough (>= ~30) to guarantee that headroom; the OSPF cost
+    floor is 1, we keep >= 2.
+    """
+    margin = rng.randint(5, 40)            # strict separation unit
+    # winner PRE: high enough that there are >=2 distinct slots strictly below it.
+    way_pre = rng.randint(30, 120)
+    alt_pre = way_pre + margin + rng.randint(5, 80)        # strictly > way_pre
+    way_raised = alt_pre + margin + rng.randint(5, 80)     # strictly > alt_pre
+    alt_raised = way_raised + margin + rng.randint(5, 80)  # higher still (inert)
+    # Two DISTINCT values strictly below way_pre (both >= 2). alt_lowered is the
+    # higher of the two; way_lowered is strictly below it.
+    alt_lowered = rng.randint(4, way_pre - 2)             # in [4, way_pre-2]
+    way_lowered = rng.randint(2, alt_lowered - 1)         # in [2, alt_lowered-1]
+    # Final guards (the draws above satisfy these by construction; assert to be safe).
+    assert 2 <= way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+    assert way_lowered != alt_lowered
+    return _LinkCosts(
+        way_pre=way_pre, alt_pre=alt_pre, way_raised=way_raised,
+        alt_lowered=alt_lowered, alt_raised=alt_raised, way_lowered=way_lowered,
+    )
+
+
+@dataclass(frozen=True)
 class _Params:
     """The randomized-but-fixed-per-seed concrete values for one instance."""
 
@@ -183,6 +243,7 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    costs: _LinkCosts        # randomized strict-gap OSPF underlay-cost constants
 
 
 def _draw_params(seed: int) -> _Params:
@@ -202,8 +263,12 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # Drawn LAST so the ASN/IP/name addressing above stays byte-identical to before.
+    costs = _draw_link_costs(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
-                   link_block=link_block, customer_net=customer_net, name=name)
+                   link_block=link_block, customer_net=customer_net, name=name,
+                   costs=costs)
 
 
 # --------------------------------------------------------------------------- #
@@ -373,8 +438,9 @@ def _dst_config(topo: _Topo) -> str:
 
 
 def _baseline_configs(topo: _Topo) -> dict[str, str]:
+    c = topo.params.costs
     return {
-        topo.name["src"]: _src_config(topo, cost_way=_COST_WAY_PRE, cost_alt=_COST_ALT_PRE),
+        topo.name["src"]: _src_config(topo, cost_way=c.way_pre, cost_alt=c.alt_pre),
         topo.name["way"]: _egress_config(topo, "way"),
         topo.name["alt"]: _egress_config(topo, "alt"),
         topo.name["dst"]: _dst_config(topo),
@@ -386,30 +452,31 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 # --------------------------------------------------------------------------- #
 def _apply_change(topo: _Topo) -> str:
     knob, effect = topo.spec.knob, topo.spec.effect
-    before = _src_config(topo, cost_way=_COST_WAY_PRE, cost_alt=_COST_ALT_PRE)
+    c = topo.params.costs
+    before = _src_config(topo, cost_way=c.way_pre, cost_alt=c.alt_pre)
 
     if knob == "raise_way":
-        # bypass: raise src->way cost 10->200 (alt's 100 now wins).
-        # no_op : raise src->alt cost 100->300 (alt was already losing; way still wins).
+        # bypass: raise src->way cost way_pre->way_raised (alt's alt_pre now wins).
+        # no_op : raise src->alt cost alt_pre->alt_raised (alt was already losing; way wins).
         if effect == "bypass":
-            old = f" ip ospf cost {_COST_WAY_PRE}\n"
-            new = f" ip ospf cost {_COST_WAY_RAISED}\n"
-            after = _src_config(topo, cost_way=_COST_WAY_RAISED, cost_alt=_COST_ALT_PRE)
+            old = f" ip ospf cost {c.way_pre}\n"
+            new = f" ip ospf cost {c.way_raised}\n"
+            after = _src_config(topo, cost_way=c.way_raised, cost_alt=c.alt_pre)
         else:
-            old = f" ip ospf cost {_COST_ALT_PRE}\n"
-            new = f" ip ospf cost {_COST_ALT_RAISED}\n"
-            after = _src_config(topo, cost_way=_COST_WAY_PRE, cost_alt=_COST_ALT_RAISED)
+            old = f" ip ospf cost {c.alt_pre}\n"
+            new = f" ip ospf cost {c.alt_raised}\n"
+            after = _src_config(topo, cost_way=c.way_pre, cost_alt=c.alt_raised)
     else:  # lower_alt
-        # bypass: lower src->alt cost 100->5 (alt now beats way's 10).
-        # no_op : lower src->way cost 10->5 (way was already winning; still wins).
+        # bypass: lower src->alt cost alt_pre->alt_lowered (alt now beats way's way_pre).
+        # no_op : lower src->way cost way_pre->way_lowered (way was already winning; still wins).
         if effect == "bypass":
-            old = f" ip ospf cost {_COST_ALT_PRE}\n"
-            new = f" ip ospf cost {_COST_ALT_LOWERED}\n"
-            after = _src_config(topo, cost_way=_COST_WAY_PRE, cost_alt=_COST_ALT_LOWERED)
+            old = f" ip ospf cost {c.alt_pre}\n"
+            new = f" ip ospf cost {c.alt_lowered}\n"
+            after = _src_config(topo, cost_way=c.way_pre, cost_alt=c.alt_lowered)
         else:
-            old = f" ip ospf cost {_COST_WAY_PRE}\n"
-            new = f" ip ospf cost {_COST_WAY_LOWERED}\n"
-            after = _src_config(topo, cost_way=_COST_WAY_LOWERED, cost_alt=_COST_ALT_PRE)
+            old = f" ip ospf cost {c.way_pre}\n"
+            new = f" ip ospf cost {c.way_lowered}\n"
+            after = _src_config(topo, cost_way=c.way_lowered, cost_alt=c.alt_pre)
 
     if old not in before:
         raise RuntimeError(
@@ -443,14 +510,15 @@ def _unified(before: str, after: str, node: str) -> str:
 def _description(topo: _Topo) -> str:
     knob, effect = topo.spec.knob, topo.spec.effect
     src = topo.name["src"]
+    c = topo.params.costs
     if knob == "raise_way":
         iface = "eth1" if effect == "bypass" else "eth2"
-        frm = _COST_WAY_PRE if effect == "bypass" else _COST_ALT_PRE
-        to = _COST_WAY_RAISED if effect == "bypass" else _COST_ALT_RAISED
+        frm = c.way_pre if effect == "bypass" else c.alt_pre
+        to = c.way_raised if effect == "bypass" else c.alt_raised
     else:  # lower_alt
         iface = "eth2" if effect == "bypass" else "eth1"
-        frm = _COST_ALT_PRE if effect == "bypass" else _COST_WAY_PRE
-        to = _COST_ALT_LOWERED if effect == "bypass" else _COST_WAY_LOWERED
+        frm = c.alt_pre if effect == "bypass" else c.way_pre
+        to = c.alt_lowered if effect == "bypass" else c.way_lowered
     return (
         f"On `{src}` (AS{topo.params.core_asn}), change the OSPF interface cost on "
         f"`{iface}` from {frm} to {to} (a one-line `ip ospf cost` edit). See the diff."

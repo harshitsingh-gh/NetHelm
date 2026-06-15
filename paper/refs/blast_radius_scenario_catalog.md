@@ -166,8 +166,9 @@ blast radius is non-obvious** (the trap), **dimensions scored**, **oracle**.
 - **Topology:** Enterprise edge with default + specific statics; a summarised null route.
 - **Change:** add a static whose next-hop becomes unresolvable, or a `Null0` summary while a more-specific is withdrawn.
 - **Why non-obvious:** traffic to covered prefixes is silently blackholed (dropped, not error); coarse "route exists" checks pass.
-- **Dimensions:** D7 (blackhole), D3.
-- **Oracle:** Batfish — `traceroute` disposition (NULL_ROUTED / DELIVERED) + routes.
+- **Dimensions (abstract hazard):** D7 (blackhole), D3.
+- **Dimensions (as implemented — `scenario_blackhole.py` on square4):** **D1×2, D2, D3, D7.** The removed static is also how `r1` reaches `r4`'s loopback (10.0.0.4) — the *peering address* of the loopback-sourced `r1↔r4` iBGP session — so removing it tears down that session (both endpoints → D1=2) and `r1` loses `10.0.0.4/32` from its RIB (D2) in addition to the recursive-next-hop blackhole (D7) + reachability loss (D3). Verified live (HANDOFF.md). The implemented instance is LOUD, not the quiet single-node blackhole the abstract entry suggests.
+- **Oracle:** Batfish — `traceroute` disposition (NULL_ROUTED / DELIVERED) + routes + BGP session status.
 - **Source:** NIKA "blackhole routes."
 
 ### S16 — Anycast origin withdrawn at one site

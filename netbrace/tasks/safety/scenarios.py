@@ -157,6 +157,13 @@ def waypoint_scenario() -> Scenario:
 
 
 def blackhole_scenario() -> Scenario:
+    # TRUE blast radius (verified live, HANDOFF.md): D1=2 (r1<->r4 iBGP session, both
+    # endpoints — the removed static is also r1's route to r4's loopback peering addr),
+    # D2 (r1 loses 10.0.0.4/32), D3 + D7 (NO_ROUTE blackhole at r1). See
+    # scenario_blackhole.py for the full mechanism. reachability_flows == forwarding_flows
+    # is a DELIBERATE, disclosed D3+D7 overlap to show D7's classification/localization
+    # value over D3 (the opposite choice from ipc_scenario, which is D3-only to avoid the
+    # double-count). Do not read the overlap as two independent damage events.
     return Scenario(
         name="square4",
         nodes=list(bh.baseline_configs().keys()),

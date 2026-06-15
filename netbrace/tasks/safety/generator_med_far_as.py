@@ -9,9 +9,11 @@ This is the MED member of the quiet-half catalog (Family 2, BUILD_V1.1). It is t
 `generator_igp_metric` (an interior OSPF cost edit). Here the decisive edit lives on
 the CUSTOMER's router (dst), one AS away, and acts through the MULTI_EXIT_DISCRIMINATOR
 that dst attaches to each of its two uplinks — the textbook "customer steers the
-provider's inbound traffic with MED" technique (RFC 4271 §5.1.4 / §9.1.2.1 step e).
+provider's inbound traffic with MED" technique (RFC 4271 §5.1.4 sets the attribute;
+the decision rides the MULTI_EXIT_DISC tie-break in §9.1.2.2 "Breaking Ties (Phase 2)").
 
-Mechanism (RFC 4271 §9.1.2.1 step "lowest MED", FRR bgp_path_info_cmp MED step):
+Mechanism (RFC 4271 §9.1.2.2 "Breaking Ties (Phase 2)", the MULTI_EXIT_DISC item; FRR
+bgp_path_info_cmp MED step):
 the customer dst is dual-homed via eBGP to BOTH provider egresses `way` and `alt`,
 which are in the SAME provider AS (a single-provider dual-homing — see the HARD
 CONSTRAINT below). dst originates the customer /24 and, on its OUTBOUND advertisement
@@ -22,13 +24,31 @@ received paths to the customer /24 are otherwise IDENTICAL:
   * EQUAL AS_PATH length (both ``[AS_dst]`` — a single customer AS hop on each),
   * same ORIGIN,
 so the BGP best-path decision at the inspection-source `src` FALLS THROUGH to the MED
-comparison. Crucially the MED is COMPARABLE: both paths carry neighbor-AS = AS_dst (the
-same first AS), so the default "compare MED only across same-neighbour-AS routes" rule
-(RFC 4271 §9.1.2.1; FRR default) applies WITHOUT `always-compare-med`. And the MED dst
-attached on each eBGP uplink is PRESERVED across the eBGP->iBGP boundary and propagated
-on the provider's iBGP overlay (MED is non-transitive across an AS but IS carried within
-the receiving AS — verified FRR docs 2026-06-15), so `src` (a provider router that learns
-both paths over iBGP) compares dst's two MEDs directly.
+comparison. The two MEDs are COMPARABLE under BOTH comparators, so the mechanism is
+correct on a real router AND deterministic in Batfish:
+
+  (a) REAL ROUTER (RFC 4271 §9.1.2.2, the MULTI_EXIT_DISC item): a real BGP speaker
+      compares MED only between routes whose first/leftmost neighbour AS is the same,
+      unless `always-compare-med` is configured. This topology SATISFIES that gate
+      anyway — single upstream/customer AS, dual-homed, so both received paths carry
+      neighbour-AS = AS_dst — so the same-first-AS condition holds and the MED is
+      eligible WITHOUT `always-compare-med`.
+  (b) BATFISH (pinned digest): Batfish's best-path comparator compares MED
+      UNCONDITIONALLY — `BgpRib.java:209` is a bare `Long.compare(getMetric, getMetric)`
+      with NO same-neighbour-AS gate; its default already behaves like
+      `always-compare-med` (see knowledge/corpus/batfish/batfish_verified_facts.md,
+      "MED comparability knobs are UNMODELED in FRR"). The FRR dialect parses-and-drops
+      both `always-compare-med` and `deterministic-med` to no-ops.
+
+The mechanism decides purely on the MED *value* flip (way-MED vs alt-MED), NOT on the
+gate, so it does NOT depend on the same-first-AS condition being honoured. That makes
+it IMMUNE to the always-compare-med false-quiet landmine that kills gate-dependent
+scenarios in FRR: it never relies on `always-compare-med` being OFF (a no-op flag that
+would suppress the pre-state for any gate-based scenario), so (a) and (b) agree. The
+MED dst attached on each eBGP uplink is PRESERVED across the eBGP->iBGP boundary and
+propagated on the provider's iBGP overlay (MED is non-transitive across an AS but IS
+carried within the receiving AS — verified FRR docs 2026-06-15), so `src` (a provider
+router that learns both paths over iBGP) compares dst's two MEDs directly.
 
   * PRE: dst advertises a STRICTLY LOWER MED toward `way` than toward `alt`, so the
     way-path wins the MED step and src->customer transits the inspection node `way`.
@@ -43,26 +63,30 @@ FSM (RFC 4271 §8: Established exits only on NOTIFICATION/hold-timer/TCP teardow
 D1=∅. The /24 stays BEST and installed in every provider RIB (only its chosen egress
 moves), so D2=∅; `alt` delivers exactly as `way` did, so D3=∅, D7=∅. A STRICT (non-equal)
 MED gap in BOTH snapshots means exactly one best path each time at the MED step — which
-sits ABOVE the IGP-metric and router-id steps (RFC 4271 §9.1.2.1 order) — so the
-nondeterministic router-id/age tiebreak is NEVER reached, maximum-paths default 1, no
+sits ABOVE the IGP-metric and router-id items (RFC 4271 §9.1.2.2 "Breaking Ties (Phase
+2)" order) — so the nondeterministic router-id/age tiebreak is NEVER reached, maximum-paths default 1, no
 equal-cost ECMP tie, D5=∅, and the oracle is byte-identical. The provider's OSPF costs
 to the two egress loopbacks are deliberately EQUAL (the MED decides first), so the IGP
 step cannot covertly become the discriminator.
 
-HARD CONSTRAINT — DUAL-HOMED, SINGLE PROVIDER (one core AS for way+alt). The honored-MED
-assumption ("MED decides because both paths share the same neighbour AS") FAILS the
-moment way and alt sit in DIFFERENT transit ASes: then the two paths at src carry
-DIFFERENT neighbour ASes and the default rule does NOT compare their MEDs (it would need
-`always-compare-med`, which Batfish does not model and which is not idiomatic for this
-case). So this topology is, by construction, a single-provider dual-homing: src/way/alt
-are ONE provider AS, dst is ONE customer AS dual-homed to that provider.
+HARD CONSTRAINT — DUAL-HOMED, SINGLE PROVIDER (one core AS for way+alt). This keeps the
+scenario REAL-ROUTER-IDIOMATIC: on a real speaker, MED decides only between same-first-AS
+routes (RFC 4271 §9.1.2.2), and a single customer AS dual-homed to one provider satisfies
+that gate without `always-compare-med`. (Batfish would compare the MEDs even across
+different neighbour ASes — its comparator has no such gate — but we do NOT lean on that;
+the single-provider design makes the mechanism correct on both real routers and Batfish.)
+If way and alt sat in DIFFERENT transit ASes, a real router would no longer compare the
+MEDs absent `always-compare-med`, so the topology is, by construction, a single-provider
+dual-homing: src/way/alt are ONE provider AS, dst is ONE customer AS dual-homed to it.
 
 REQUIRED FIX (verified on the pinned Batfish digest, 2026-06-15):
   * Do NOT emit ``bgp deterministic-med`` ANYWHERE — it is unparseable in the Batfish
     snapshot (it would fail fileParseStatus). The strict MED gap in both snapshots gives
     a well-defined, order-independent best path without it.
-  * Do NOT emit ``bgp always-compare-med`` either — Batfish does not model it, and the
-    mechanism relies on the DEFAULT same-neighbour-AS comparison (which IS modelled).
+  * Do NOT emit ``bgp always-compare-med`` either — the FRR dialect parses-and-drops it
+    to a no-op (batfish_verified_facts.md), and the mechanism does not need it: it
+    decides on the MED VALUE flip, which both the real-router same-first-AS comparator
+    (satisfied here) and Batfish's unconditional comparator evaluate identically.
   * The egress next-hop rewrite toward src uses the HONORED outbound route-map
     ``set ip next-hop <own-lo>`` form, NOT bare ``neighbor X next-hop-self`` (which the
     pinned digest treats as a no-op for eBGP-learned routes). Identical to
@@ -388,8 +412,11 @@ def _egress_config(topo: _Topo, role: str) -> str:
 def _dst_config(topo: _Topo, *, med_way: int, med_alt: int) -> str:
     """dst: the customer AS, eBGP to way + alt, originates the customer /24 + its lo.
     Attaches a per-neighbour OUTBOUND MED (the KNOB) via ``set metric`` route-maps.
-    NEVER emits ``bgp deterministic-med`` (unparseable) nor ``always-compare-med``
-    (unmodelled): the strict MED gap + default same-neighbour-AS comparison suffice."""
+    NEVER emits ``bgp deterministic-med`` (unparseable) nor ``always-compare-med`` (the
+    FRR dialect drops it to a no-op): the strict MED VALUE gap alone gives one best path
+    each snapshot — evaluated identically by the real-router same-first-AS comparator
+    (this single-provider topology satisfies the gate) and by Batfish's unconditional
+    MED comparator (no same-AS gate; see batfish_verified_facts.md)."""
     p = topo.params
     lo = topo.loopback["dst"]
     eth = [("eth1", f"{topo.ip[('dst', 'way')]}/30"),

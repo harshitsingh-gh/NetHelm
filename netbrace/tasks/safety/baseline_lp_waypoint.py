@@ -1,5 +1,14 @@
 """The `lp_waypoint` baseline: a BGP topology for the LOCAL_PREF-driven D4 class.
 
+⚠️ DEPRECATED / NON-CANONICAL (audit 2026-06-15 finding #14, and the original
+2026-06-10 K3/M3 audit). This hand-authored baseline steers via STATIC routes to
+*external* /30 next-hops — a config no operator writes. The CANONICAL, PUBLISHED
+LOCAL_PREF-waypoint path is `generator_lp.generate_lp_suite` (an idiomatic ALL-eBGP
+topology with directly-connected next-hops and NO static crutch); that is what the
+model sweep scores via `build_generated_suite_multi`. This module is retained ONLY
+as the legacy `REGISTRY["lp_waypoint"]` scenario (determinism-gate continuity) and
+must NOT be used as the published base. New work uses `generator_lp`.
+
 Purpose (spine class 5, "local-pref/MED empty-blast trap" in
 docs/oracle_determinism_spec_v1.md): demonstrate a blast radius that is a pure
 WAYPOINT (D4) violation driven by a BGP **attribute** (LOCAL_PREF) change — the

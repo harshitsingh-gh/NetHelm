@@ -149,18 +149,32 @@ Route maps with `match ip address prefix-list` work. Route maps with `match ip a
 - **The only FRR diversity primitive Batfish models is best-path-EQUAL multipath** (`maximum-paths` / `multipath-relax`). Collapsing it 2→1 IS gradeable, but it lowers the installed next-hop count → fires D5 → it is the already-built LOUD ECMP-collapse class (`clos_summary` / `ecmp4`), not a new quiet mechanism.
 - **Verdict:** ADD-PATH-suppression is NOT gradeable in FRR (null oracle), and even forced into an expressible `maximum-paths 2→1` form it degenerates into the existing LOUD D5 ECMP-collapse class or the `rr-bestpath-reflect-flip` / igp-metric quiet BUILD family (path-count 1→1, egress flipped via OSPF cost) that already exists. It adds nothing distinct. Expressibility would require an Arista-EOS dialect (addpath IS in the EOS extractor; Batfish has dataplane `BgpAddPathNonEcmpBest`/`UniqueNextHop` tests) — but that breaks the all-FRR single-dialect baseline invariant AND still cannot produce a pure D4+D10 signature. The *operational* failure mode (RR + no add-path = clients have no hot backup, slow RR-mediated reconverge — route reflection ≈doubles post-failure convergence vs full mesh, arXiv:2503.15249; tier-1 RR meshes leave most routers with a single external route, "BGP Route Reflection Revisited") is REAL — see `../noc/rr_bestpath_hiding.md`. It is the *oracle* that is blind to it in FRR, not the failure mode that is fake.
 
-### FRR OSPF inter-area summary (`area range`) — what IS and ISN'T modeled (live-verified on pinned digest, 2026-06-14)
-**Tested on `batfish/allinone` `sha256:09817554db90…` (== `:nethelm`), 4-node multi-area design (src/wabr/babr/eg), by the oracle-engineer (live bgpRib/routes/traceroute reads, NOT memory):**
+### FRR OSPF inter-area summary (`area range`) — what IS and ISN'T modeled (live-verified on pinned digest, 2026-06-14; RE-VERIFIED + extended 2026-06-15)
+**Tested on `batfish/allinone` `sha256:09817554db90…` (== `:nethelm`), multi-area design (src/wabr/babr/eg/dst), by the oracle-engineer (live bgpRib/routes/traceroute reads, NOT memory). RE-VERIFIED 2026-06-15 on the 5-node `generator_igp_summary` topology that BUILDS this knob (B2 audit follow-up — the generator docstring had FALSELY claimed `area range cost` was "PARTIALLY_UNRECOGNIZED"; this section was right, the docstring was wrong; the generator was rebuilt to use the real knob).**
 - **`area N range A.B.C.D/M cost C` (BARE `cost` form) IS MODELED.** Parses as
-  `CUMULUS_CONCATENATED` with zero init issues; the summary appears at the remote node as
-  `proto=ospfIA`. Changing the summary `cost` flips the remote node's installed inter-area
-  next-hop (e.g. `192.0.2.2`(wabr) → `192.0.2.6`(babr)) and the forward trace
+  `CUMULUS_CONCATENATED` with **zero init issues** (all 5 generator configs `PASSED`,
+  `initIssues` empty — confirmed again 2026-06-15); the summary appears at the remote node
+  as `proto=ospfIA`. Changing the summary `cost` flips the remote node's installed
+  inter-area next-hop (e.g. `192.0.2.2`(wabr) → `192.0.2.6`(babr)) and the forward trace
   (`src,wabr,eg` → `src,babr,eg`), both ACCEPTED. This drives **recursive resolution of an
   unchanged iBGP next-hop** — see `../noc/ospf_summary_cost_nexthop_reroute.md`.
-- **Inter-area `/32` specifics are SUPPRESSED behind an `area range`.** `routes(src,
-  <egress>/32)` returned rows = 0 with the range configured → the **summary is the LPM
-  resolver** at remote nodes. This is the linchpin that makes the summary-cost lever
-  distinct from the link-cost hot-potato lever.
+- **Metric composition: `cost C` OVERRIDES the computed Type-3 metric (verified 2026-06-15).**
+  The remote node's inter-area metric to the summary = (remote's interface cost toward the
+  ABR) + (the configured `area range cost C`). The ABR's BACKBONE (area-0, egress-facing)
+  interface cost is **IRRELEVANT** (swept bb_cost ∈ {5,10,99} with cost C fixed → identical
+  src metric). So `area range cost C` is the SOLE summary-metric lever; the discriminator
+  is purely the two ABRs' `cost C` values when the remote→ABR legs are equal-cost. (E.g.
+  src→wabr default cost 10 + `cost 50` → src ospfIA metric 60; + `cost 1` → 11.)
+- **Inter-area `/32` specifics are SUPPRESSED behind an `area range` — BUT only if the
+  `/32` reaches the remote via OSPF ONLY.** `routes(src, <egress>/32)` returned rows = 0
+  with the range configured AND the egress loopback NOT re-injected into BGP → the
+  **summary is the LPM resolver** at remote nodes. **GOTCHA (caught 2026-06-15):** if the
+  egress advertises `network <egress-lo>/32` into iBGP, the `/32` LEAKS via BGP and
+  resolves the next-hop directly, making the `area range` suppression VACUOUS (the lever
+  becomes a no-op for the BGP next-hop). The generator therefore DROPS the egress's
+  `network <lo>/32` and lets the loopback reach the core via OSPF area 0 only. This
+  /32-suppression is the linchpin that makes the summary-cost lever distinct from the
+  link-cost hot-potato lever (where src reads the egress /32 directly).
 - **EQUAL summary cost → LOUD.** With both inter-area costs equal (e.g. 100 == 100), the
   remote node installs **2 distinct next-hops** (ECMP) → **D5 fires.** The generator must
   hold a STRICT cost gap in both snapshots (verified to keep nh-count = 1).
@@ -172,7 +186,8 @@ Route maps with `match ip address prefix-list` work. Route maps with `match ip a
 - Determinism: `compute_extended_with_determinism_check(runs=10)` = byte-identical 10×,
   because the summary COST (a strict-gap OSPF metric) decides the inter-area route ABOVE
   any router-id tiebreak → exactly one installed route, no router-id/age multipath
-  nondeterminism. Only equality (LOUD) loses determinism.
+  nondeterminism. Only equality (LOUD) loses determinism. (10× byte-identical re-confirmed
+  on both bypass combos 2026-06-15; artifact runs/oracle_verify_igp_summary_fix_20260615/.)
 
 ### Supported Config Formats
 Batfish parses: Cisco IOS, Cisco IOS-XE, Cisco IOS-XR, Cisco NX-OS, Arista EOS, Juniper JunOS, Palo Alto PAN-OS, iptables, AWS VPC, Azure/GCP (limited), FRR (partial — see limitations above).

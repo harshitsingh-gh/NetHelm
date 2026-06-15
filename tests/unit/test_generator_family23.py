@@ -9,9 +9,23 @@ pure {waypoint,intent}; no_op -> empty; 10x byte-identical) was authoritatively
 re-validated on a fresh seed base (600) and saved to runs/oracle_verify_family23_20260615/.
 
 NOTE (carried to /design-review + /red-team):
-  * origin_code passed the oracle gate but its diff bundles a SET_MED route-map removal with
-    the network<->redistribute-static ORIGIN swap; whether the ORIGIN step (vs a MED
-    side-effect) is the true cause needs the architect's eye -- treat as provisional.
+  * origin_code (RESOLVED by network-architect 2026-06-15, audit M2/M3/M4):
+      - The bypass diff does NOT remove the MED. The `set metric <m>` is RELOCATED from the
+        outbound SET_MED_<role> route-map into the redistribution route-map REDIST_CUST; the
+        advertised MED (200 way / 50 alt) is PRESERVED across the swap (rendered + confirmed,
+        seeds 600/601). So the bypass changes exactly ONE routing-relevant attribute: ORIGIN.
+      - Cause attribution is two-step and now stated honestly in the generator docstring:
+        PRE the ORIGIN step (RFC 4271 §9.1.2.2 (b), igp<incomplete) is decisive; POST/bypass
+        the ORIGIN step TIES and the decision falls through to the MED step §9.1.2.2 (c)
+        (50<200) -- the MED is the real POST discriminator, ungated by the ORIGIN flip. NOT
+        "ORIGIN is decisive POST". No longer provisional.
+      - Gameability tell CLOSED: the no_op now edits the CUSTOMER prefix (re-originate via
+        redistribute static + `set origin <pre-origin>`, best-path-neutral) instead of the
+        OWN loopback, so BOTH twins name the customer prefix in their +/- diff lines. A
+        purely syntactic "does the patch touch the customer prefix?" heuristic can no longer
+        separate trap from calibration; only reading the `set origin` neutralizer does. The
+        no_op GT stays COMPLETELY EMPTY and 10x byte-identical (live-verified on the pinned
+        digest, runs/oracle_verify_origin_code_fix_20260615/).
   * community_lp's no_op edits a different node than its bypass (a weak positional tell,
     like Family-1's nexthop_elim) -- worth hardening.
 """
@@ -152,3 +166,67 @@ def test_is_trap_matches_bypass_and_provenance(slug, mod, n):
         scn = inst(5, spec=spec)
         assert scn.is_trap == ("bypass" in spec.dims_label()), (slug, scn.name)
         assert scn.provenance == "templated", slug
+
+
+# --------------------------------------------------------------------------- #
+# origin_code-SPECIFIC assertions (audit M2/M3/M4 fixes). These lock the gameability
+# closure + the MED-relocation/RFC-citation honesty for the origin_code family only.
+# --------------------------------------------------------------------------- #
+def _diff_pm_lines(scn):
+    """The +/- (non-header) lines of the change_target's PRE->POST diff."""
+    pre = scn.pre_configs[scn.change_target].splitlines()
+    post = scn.post_configs()[scn.change_target].splitlines()
+    import difflib
+    return [l for l in difflib.unified_diff(pre, post, lineterm="")
+            if (l.startswith("+") or l.startswith("-"))
+            and not l.startswith(("+++", "---"))]
+
+
+def test_origin_code_both_twins_name_customer_prefix():
+    """audit-M3 gameability fix: a purely syntactic 'does the patch touch the customer
+    prefix?' heuristic must NOT separate trap (bypass) from calibration (no_op). BOTH must
+    add/remove a +/- diff line that literally names the customer /24, and NEITHER may hide
+    on the OWN loopback /32 (the OLD no_op tell)."""
+    mod = generator_origin_code
+    for spec in mod.enumerate_specs():
+        scn = mod.generate_origin_code_instance(600, spec=spec)
+        cust = scn.watched_prefixes[-1]              # the customer /24 (last watched)
+        assert not cust.endswith("/32"), cust         # sanity: it's the /24, not a loopback
+        pm = _diff_pm_lines(scn)
+        cust_lines = [l for l in pm if cust in l]
+        assert cust_lines, (spec.dims_label(), "no +/- diff line names the customer prefix")
+        # the no_op must NOT revert to the old loopback-redistribute tell
+        assert not any(("REDIST_LOOP" in l or "LOOP_PL" in l
+                        or "redistribute connected" in l) for l in pm), spec.dims_label()
+
+
+def test_origin_code_noop_carries_set_origin_neutralizer():
+    """The no_op must carry an explicit `set origin` pin (igp on the way knob, incomplete on
+    the alt knob) — the load-bearing best-path-NEUTRAL clause that distinguishes it from the
+    bypass by routing reasoning rather than by which prefix is touched. The bypass must NOT
+    carry a `set origin` clause (the ORIGIN is left to flip)."""
+    mod = generator_origin_code
+    for spec in mod.enumerate_specs():
+        scn = mod.generate_origin_code_instance(600, spec=spec)
+        added = [l[1:] for l in _diff_pm_lines(scn) if l.startswith("+")]
+        has_set_origin = any("set origin" in l for l in added)
+        if spec.effect == "no_op":
+            assert has_set_origin, (spec.dims_label(), "no_op missing set-origin neutralizer")
+            want = "igp" if spec.knob == "way_to_incomplete" else "incomplete"
+            assert any(f"set origin {want}" in l for l in added), spec.dims_label()
+        else:  # bypass leaves ORIGIN free to flip
+            assert not has_set_origin, (spec.dims_label(), "bypass should not pin origin")
+
+
+def test_origin_code_bypass_relocates_med_not_removed():
+    """audit-M4: the bypass must NOT delete the MED. The `set metric <m>` must still be
+    present in the POST config (relocated from the outbound SET_MED route-map into the
+    redistribution route-map), so the advertised MED is preserved across the swap."""
+    mod = generator_origin_code
+    for spec in mod.enumerate_specs():
+        if spec.effect != "bypass":
+            continue
+        scn = mod.generate_origin_code_instance(600, spec=spec)
+        post = scn.post_configs()[scn.change_target]
+        med = "200" if spec.knob == "way_to_incomplete" else "50"
+        assert f"set metric {med}" in post, (spec.dims_label(), "MED was removed, not relocated")

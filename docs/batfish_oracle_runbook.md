@@ -304,12 +304,24 @@ session not existing in the post snapshot, so it drops from
 (`test_shut_neighbor_removes_three_lines`). Needs live Batfish confirmation.
 
 **Q3: Does any prefix actually leave the RIB when a session is shut?**
-Probably **no** for the square4 topology — static routes to all loopbacks mean
-the loopback prefixes survive in the RIB even when the BGP origination is gone.
-`prefixes_lost` will therefore likely be empty for `shut_neighbor` tasks but
-non-empty for `remove_network` tasks (which delete the `network X.X.X.X/32`
-origination line). Confirm by running Step 3 above and examining both intent
-types.
+**No** for the square4 topology — static routes to all loopbacks mean the
+loopback prefixes survive in the MAIN RIB even when the BGP origination is gone.
+`prefixes_lost` (a MAIN-RIB disappearance diff) is therefore EMPTY for BOTH
+`shut_neighbor` AND `remove_network` tasks: removing `network 10.0.0.X/32` stops
+the BGP *origination*, but the static route to that loopback (admin-distance 1)
+keeps the prefix in the main RIB, so it never disappears. The real loss from
+`remove_network` is a **BGP-RIB-BEST withdrawal** — visible only to the D9 term
+(`bgp_withdrawn`) of the `ExtendedOracle` when `bgp_watch_prefixes` is set, NOT
+to the v0 `prefixes_lost` diff.
+
+> ⚠️ **`remove_network` is a v0-oracle FALSE-QUIET.** The v0 `BatfishOracle`
+> has no BGP-RIB / D9 term, so it grades a `remove_network` change as a
+> *completely empty* blast radius even though every peer loses the prefix from
+> its BGP RIB. **Do NOT grade `remove_network` with the v0 oracle.** Grade
+> prefix-withdrawal events through `ExtendedOracle` with `bgp_watch_prefixes`
+> set (the `ipc` scenario is the gradeable D9 form). The shipped v0 suite is
+> `shut_neighbor`-only for exactly this reason; the regression test
+> `tests/unit/test_v0_remove_network_guard.py` pins that invariant.
 
 ---
 

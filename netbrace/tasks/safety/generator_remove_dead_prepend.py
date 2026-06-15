@@ -11,34 +11,43 @@ was masking a LATENT, lower-priority discriminator — hands the decision to tha
 attribute and silently moves the egress. The "the safe-looking delete is the dangerous
 one" trap (RFC 4271 §9.1.2.2 best-path order; the masked-tiebreak failure mode).
 
-Mechanism (RFC 4271 §9.1.2.2 steps 4 → 6; FRR bgp_path_info_cmp): `src` learns the
-customer /24 over eBGP from BOTH `way` and `alt`, which share ONE upstream AS (AS_up),
-so from `src`'s view both received paths carry the SAME first (neighbor) AS — the
-precondition for a MED comparison (MEDs are compared only when the first AS in the
-AS_SEQUENCE matches; verified current, blog.ipspace.net BGP-MED-saga + Cisco 13759).
+Mechanism (RFC 4271 §9.1.2.2, Breaking Ties (Phase 2), lettered items (a)..(f);
+FRR bgp_path_info_cmp): `src` learns the customer /24 over eBGP from BOTH `way` and
+`alt`, which share ONE upstream AS (AS_up). On a REAL router that same-first-AS
+property is what makes the latent MED eligible for comparison under RFC 4271
+§9.1.2.2(c) (MEDs compared only when the leftmost/neighbor AS matches; blog.ipspace.net
+BGP-MED-saga + Cisco 13759 — REAL-ROUTER realism only). On the PINNED Batfish digest,
+however, gradeability does NOT depend on that gate: Batfish compares MED
+UNCONDITIONALLY across ASes (no same-neighbor-AS gate — `BgpRib.java:209` is a bare
+`Long.compare`, behaving as if `always-compare-med` were always on; see
+knowledge/corpus/batfish/batfish_verified_facts.md "MED comparability ... compares MED
+UNCONDITIONALLY"). The outcome is identical either way: both paths share the first AS
+anyway, and the strict MED gap (200 > 50) picks the winner whether or not the same-AS
+gate is applied.
 
   * Two attributes are in play, at DIFFERENT priorities:
-      - AS_PATH length (step 4, HIGHER priority): in the baseline the ALT path carries
+      - AS_PATH length (item (b), HIGHER priority): in the baseline the ALT path carries
         an AS-path prepend (looks like dead cruft) making it STRICTLY LONGER than the
         WAY path, so `way` wins on AS-path length and src->customer transits the
         inspection node `way`.
-      - MED (step 6, LOWER priority, LATENT): `way` advertises a HIGHER MED and `alt`
+      - MED (item (d), LOWER priority, LATENT): `way` advertises a HIGHER MED and `alt`
         a strictly LOWER MED toward `src`. While AS-path decides, MED is never reached
         — the lower-MED preference for `alt` is MASKED.
   * DIFF (bypass): DELETE the prepend on the ALT path. The two AS-path lengths
-    EQUALIZE, the step-4 decision becomes a tie, and the best-path falls through ORIGIN
-    (tie, both IGP) to the LATENT step-6 MED — which strictly favors `alt`. `alt` now
-    wins and src->customer silently bypasses `way`.
+    EQUALIZE, the item-(b) decision becomes a tie, and the best-path falls through
+    ORIGIN (tie, both IGP) to the LATENT item-(d) MED — which strictly favors `alt`.
+    `alt` now wins and src->customer silently bypasses `way`.
   * no_op: DELETE a prepend that does NOT equalize the decisive attribute (trim ONE of
     the SEVERAL prepends on the already-losing ALT side). The ALT AS-path stays
-    strictly longer than WAY, AS-path length still decides at step 4, MED is never
+    strictly longer than WAY, AS-path length still decides at item (b), MED is never
     reached, `way` still wins. Ground truth is COMPLETELY EMPTY — the calibration trap.
 
 THE QUIET SIGNATURE (D4 waypoint + D10 intent ONLY): removing an AS-path prepend never
 resets the BGP FSM (RFC 4271 §8: Established exits only on NOTIFICATION/hold-timer/TCP
 teardown), so D1=∅. The /24 stays BEST and installed in every RIB (only its chosen
 egress moves), so D2=∅; `alt` delivers exactly as `way` did, so D3=∅, D7=∅. The
-post-equalization winner is decided by a STRICT MED gap (NOT router-id), so there is
+post-equalization winner is decided by a STRICT MED gap at RFC 4271 §9.1.2.2(d) (NOT
+router-id), so there is
 exactly one best path each snapshot (maximum-paths default 1) — no equal-cost ECMP tie,
 D5=∅, and the oracle is byte-identical. The strict MED gap also means the decision is
 made at the MED step BEFORE the nondeterministic router-id/age steps are reached (the
@@ -57,11 +66,14 @@ Topology (4 nodes, ALL eBGP, directly-connected /30 next-hops, NO statics)::
 
   * src is AS_src; it eBGP-peers DIRECTLY (over the /30 link IP, no multihop, no
     statics) with both way and alt.
-  * way AND alt are the SAME upstream AS (AS_up) — this is the design crux: it makes
-    the two received paths share a first AS so the latent MED is comparable. Each
-    eBGP-peers with dst (AS_dst) over a directly-connected /30. dst originates the
-    customer /24 on a connected dummy host. (way and alt do NOT iBGP-peer each other;
-    src learns one path from each directly.)
+  * way AND alt are the SAME upstream AS (AS_up) — this is for REAL-ROUTER realism: on
+    a real router the shared first AS is what makes the latent MED eligible under RFC
+    4271 §9.1.2.2(c). On the pinned Batfish digest it is NOT a gradeability requirement
+    (Batfish compares MED unconditionally — batfish_verified_facts.md), but the shared
+    AS keeps the modeled instance faithful to a real bypass. Each eBGP-peers with dst
+    (AS_dst) over a directly-connected /30. dst originates the customer /24 on a
+    connected dummy host. (way and alt do NOT iBGP-peer each other; src learns one path
+    from each directly.)
   * Each upstream sets a MED outbound toward src (`set metric`): way HIGH, alt LOW —
     the latent discriminator. The prepend (the cruft) lives on the ALT path; the change
     deletes it.
@@ -95,13 +107,18 @@ supernet, customer /24, and node base name are all drawn deterministically from 
 seed. Same seed ⇒ byte-identical instance; different seed ⇒ a novel instance.
 
 Determinism contract (oracle_determinism_spec_v1.md class STATIC-DET): every best-path
-decision is STRICT in both snapshots — PRE by an AS-path-length gap (step 4), POST by a
-MED gap (step 6) — so exactly one best path at src each snapshot, no equal-cost ECMP
-tie, maximum-paths default 1. The MED-set keeps the first AS = AS_up on BOTH paths so
-the comparison is eligible (`bgp deterministic-med`/`always-compare-med` are NOT
-modeled by Batfish and are deliberately NOT emitted; the same-first-AS comparison
-Batfish DOES do is what is exploited). D4 is scored by ExtendedOracle._waypoint_diff as
-the all-traces-transit invariant; D10 by the matching kind="waypoint" IntentInvariant.
+decision is STRICT in both snapshots — PRE by an AS-path-length gap (RFC 4271
+§9.1.2.2(b)), POST by a MED gap (§9.1.2.2(d)) — so exactly one best path at src each
+snapshot, no equal-cost ECMP tie, maximum-paths default 1. Determinism comes from that
+STRICT MED gap (200 vs 50): it yields a single best path BEFORE the nondeterministic
+router-id/age tie-breaks are ever reached. It does NOT come from any same-AS
+"comparison eligibility" gate — Batfish compares MED unconditionally regardless of the
+leftmost AS (batfish_verified_facts.md), so eligibility is never in question on the
+pinned digest. (`bgp deterministic-med`/`always-compare-med` are NOT modeled by Batfish
+and are deliberately NOT emitted; they are unnecessary because Batfish's default
+comparator already behaves as if always-compare-med were on.) D4 is scored by
+ExtendedOracle._waypoint_diff as the all-traces-transit invariant; D10 by the matching
+kind="waypoint" IntentInvariant.
 
 Public API mirrors generator_lp:
     generate_remove_dead_prepend_suite(n, base_seed=...)    -> list[Scenario]
