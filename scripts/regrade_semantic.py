@@ -625,6 +625,162 @@ def paper_corrections_section() -> str:
     return "\n".join(L)
 
 
+# --------------------------------------------------------------------------- #
+# Generalised reroute-sweep regrade: load any sweep dir + re-grade semantically.
+# --------------------------------------------------------------------------- #
+
+def load_instances_from_run(run_dir: str) -> dict[str, dict]:
+    """Load instance metadata (truth, cfg, is_trap, gt_empty, split, class) from an
+    arbitrary sweep dir's instances.jsonl. Analogous to load_instances() but for a
+    single run directory rather than the hardcoded DIRS_WITH_RAW list.
+
+    cfg is extracted from the no_tools prompt (the first prompt in the prompts dict).
+    """
+    inst: dict[str, dict] = {}
+    for line in (_runs(run_dir) / "instances.jsonl").open():
+        r = json.loads(line)
+        truth = {t: set(v) for t, v in r["truth"].items()}
+        for t in EXT_ELEMENT_TYPES:
+            truth.setdefault(t, set())
+        # config_visible_prefixes reads the prompt text; use no_tools if present.
+        prompts = r.get("prompts", {})
+        prompt_text = prompts.get("no_tools") or next(iter(prompts.values()), "")
+        inst[r["instance"]] = {
+            "truth": truth, "is_trap": r["is_trap"], "gt_empty": r["gt_empty"],
+            "split": r["split"], "class": r["class"],
+            "cfg": config_visible_prefixes(prompt_text),
+        }
+    return inst
+
+
+def grade_reroute_run(run_dir: str) -> tuple[list[dict], dict, list[str]]:
+    """Re-grade all model samples from an arbitrary reroute sweep directory under BOTH
+    graders (old=grade_keysets, new=grade_keysets_semantic), exactly as grade_all does
+    for the legacy hardcoded runs.
+
+    Returns (per_sample, records, notes) with the same shape as grade_all.
+    """
+    notes: list[str] = []
+    per_sample: list[dict] = []
+    records: dict = defaultdict(lambda: {"templated": defaultdict(list),
+                                         "grounded": defaultdict(list)})
+    repro_checked = repro_mismatch = 0
+
+    inst = load_instances_from_run(run_dir)
+    raw = load_raw(run_dir)
+
+    for line in (_runs(run_dir) / "results.jsonl").open():
+        r = json.loads(line)
+        if r.get("kind") != "model":
+            continue
+        model, cond, iid, samp = (r["model"], r["condition"],
+                                   r["instance"], int(r["sample"]))
+        if iid not in inst:
+            notes.append(f"MISSING INSTANCE META {iid} in {run_dir}")
+            continue
+        key = (model, cond, iid, samp)
+        if key not in raw:
+            notes.append(f"MISSING RAW {key} in {run_dir}")
+            continue
+        meta = inst[iid]
+        pred_obj = parse_extended_prediction(raw[key])
+        valid = pred_obj is not None
+        predks = ({t: set(v) for t, v in pred_obj.key_sets().items()} if pred_obj
+                  else empty_keysets())
+        old = grade_keysets(predks, meta["truth"], is_trap=meta["is_trap"],
+                            task_id=f"{iid}|{model}|{cond}|s{samp}",
+                            valid_prediction=valid).model_dump()
+        new = grade_keysets_semantic(predks, meta["truth"], config_prefixes=meta["cfg"],
+                                     is_trap=meta["is_trap"],
+                                     task_id=f"{iid}|{model}|{cond}|s{samp}",
+                                     valid_prediction=valid).model_dump()
+        old["gt_empty"] = new["gt_empty"] = meta["gt_empty"]
+        label = f"{model} @ {cond}"
+        records[(label, "old")][meta["split"]][iid].append(old)
+        records[(label, "new")][meta["split"]][iid].append(new)
+        per_sample.append({
+            "kind": "model", "model": model, "condition": cond, "instance": iid,
+            "split": meta["split"], "class": meta["class"], "sample": samp,
+            "valid_prediction": valid,
+            "old_macro_f1": old["macro_f1"], "new_macro_f1": new["macro_f1"],
+            "old_per_type": {t: m["f1"] for t, m in old["per_type"].items()},
+            "new_per_type": {t: m["f1"] for t, m in new["per_type"].items()},
+            "old_fsa": old["false_session_alarm"], "new_fsa": new["false_session_alarm"],
+        })
+        # cross-check exact grader against saved result row
+        repro_checked += 1
+        for t, m in r.get("per_type", {}).items():
+            rm = old["per_type"].get(t, {})
+            if (m["tp"], m["fp"], m["fn"]) != (rm.get("tp"), rm.get("fp"), rm.get("fn")):
+                repro_mismatch += 1
+                notes.append(f"REPRO MISMATCH {model} {iid} s{samp} {t}")
+                break
+
+    notes.append(f"run_dir: {run_dir} | {repro_checked} checked, "
+                 f"{repro_mismatch} mismatches "
+                 f"({'PASS' if repro_mismatch == 0 else 'FAIL'})")
+    return per_sample, records, notes
+
+
+def grade_floors_from_run(run_dir: str, templated_set: str = "reroutes") -> tuple[dict, list[str]]:
+    """Rebuild baseline predictions for an arbitrary sweep dir and grade under both graders.
+
+    templated_set matches the --templated-set used in the original sweep (controls which
+    suite build_instances uses to reconstruct the floor instance list). The saved
+    instances.jsonl is used to load truth + cfg; build args are reconstructed from the
+    manifest (split, n_generated, seed, coarsen_class) so the instance list matches.
+    """
+    notes: list[str] = []
+    inst = load_instances_from_run(run_dir)
+
+    # Reconstruct build args from the manifest.
+    manifest_path = _runs(run_dir) / "summary.json"
+    if manifest_path.exists():
+        man = json.loads(manifest_path.read_text())["manifest"]
+        cmd = man.get("command", {})
+        split = cmd.get("split", "both")
+        n_generated = cmd.get("n_generated", 26)
+        seed = cmd.get("seed", 0)
+        coarsen_class = cmd.get("coarsen_class", True)
+        exclude = frozenset(cmd.get("excluded_scenarios", []))
+    else:
+        # Sensible defaults if no manifest (e.g. a manually assembled run dir).
+        split, n_generated, seed, coarsen_class, exclude = "both", 26, 0, True, frozenset()
+
+    instances = build_instances(split=split, n_generated=n_generated, seed=seed,
+                                coarsen_class=coarsen_class, exclude=exclude,
+                                templated_set=templated_set)
+    truth_by = {i.instance_id: inst[i.instance_id]["truth"] for i in instances
+                if i.instance_id in inst}
+    class_of = {i.instance_id: i.cls for i in instances}
+    from collections import Counter
+    member_count = Counter(class_of.values())
+    modal = bl.modal_keysets_by_class(truth_by, class_of)
+
+    records: dict = defaultdict(lambda: {"templated": defaultdict(list),
+                                         "grounded": defaultdict(list)})
+    for bname in bl.BASELINE_NAMES:
+        for i in instances:
+            iid = i.instance_id
+            if iid not in inst:
+                continue
+            if bname == "modal_by_class" and member_count[i.cls] < 2:
+                continue
+            meta = inst[iid]
+            pred = _baseline_pred(bname, i, truth_by[iid], modal)
+            old = grade_keysets(pred, meta["truth"], is_trap=i.is_trap,
+                                task_id=f"{iid}|baseline_{bname}").model_dump()
+            new = grade_keysets_semantic(pred, meta["truth"], config_prefixes=meta["cfg"],
+                                         is_trap=i.is_trap,
+                                         task_id=f"{iid}|baseline_{bname}").model_dump()
+            old["gt_empty"] = new["gt_empty"] = meta["gt_empty"]
+            records[(bname, "old")][meta["split"]][iid].append(old)
+            records[(bname, "new")][meta["split"]][iid].append(new)
+    notes.append(f"floors rebuilt from {run_dir} (templated_set={templated_set}): "
+                 f"{len(instances)} instances")
+    return records, notes
+
+
 def main() -> None:
     import time
     import argparse
@@ -633,6 +789,16 @@ def main() -> None:
                     help="run dir whose Sonnet 4.6 grounded samples (12k-cap re-run) "
                          "supersede the truncated 4k-cap rows. Omit for the original "
                          "byte-identical regrade.")
+    ap.add_argument("--run", default=None, dest="run_dir",
+                    help="sweep dir name (under runs/) to re-grade semantically post-hoc. "
+                         "When provided, replaces the legacy hardcoded DIRS_WITH_RAW path "
+                         "with a turnkey reroute-sweep regrade. The dir must contain "
+                         "instances.jsonl, responses.jsonl, results.jsonl, and summary.json.")
+    ap.add_argument("--templated-set", default="reroutes",
+                    choices=["legacy", "reroutes", "both"], dest="templated_set",
+                    help="which mechanism family the sweep used (controls floor instance "
+                         "reconstruction). Default reroutes; use legacy for the original "
+                         "grounded-only sweep dirs.")
     args = ap.parse_args()
     global SONNET_12K_DIR
     SONNET_12K_DIR = args.sonnet_dir
@@ -640,10 +806,20 @@ def main() -> None:
     out = _runs(f"regrade_semantic_{ts}")
     out.mkdir(parents=True, exist_ok=True)
 
-    inst = load_instances()
-    per_sample, model_recs, mnotes = grade_all(inst)
-    floor_recs, fnotes = grade_floors(inst)
-    notes = mnotes + fnotes
+    if args.run_dir:
+        # New turnkey path: re-grade an arbitrary reroute sweep directory.
+        per_sample, model_recs, mnotes = grade_reroute_run(args.run_dir)
+        floor_recs, fnotes = grade_floors_from_run(args.run_dir,
+                                                    templated_set=args.templated_set)
+        notes = mnotes + fnotes
+        notes.insert(0, f"--run mode: {args.run_dir} (templated_set={args.templated_set})")
+    else:
+        # Legacy path: hardcoded DIRS_WITH_RAW / FLOOR_RUN (byte-identical to the
+        # original regrade_semantic_2026-06-12.md output for legacy callers/tests).
+        inst = load_instances()
+        per_sample, model_recs, mnotes = grade_all(inst)
+        floor_recs, fnotes = grade_floors(inst)
+        notes = mnotes + fnotes
 
     # results.jsonl: per-sample old+new
     with (out / "results.jsonl").open("w", encoding="utf-8") as fh:
@@ -669,9 +845,15 @@ def main() -> None:
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                       encoding="utf-8")
 
-    report = render_report(model_recs, floor_recs, notes, ts)
-    report_path = REPO / "paper" / "refs" / "regrade_semantic_2026-06-12.md"
-    report_path.write_text(report, encoding="utf-8")
+    report_path: Path
+    if args.run_dir:
+        report_path = REPO / "paper" / "refs" / f"regrade_semantic_{ts}.md"
+        report = render_report(model_recs, floor_recs, notes, ts)
+        report_path.write_text(report, encoding="utf-8")
+    else:
+        report = render_report(model_recs, floor_recs, notes, ts)
+        report_path = REPO / "paper" / "refs" / "regrade_semantic_2026-06-12.md"
+        report_path.write_text(report, encoding="utf-8")
 
     print(report)
     print(f"\nwrote {out}/results.jsonl")

@@ -40,6 +40,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from netbrace.graders.semantic_sets import (
+    config_visible_prefixes,
+    grade_keysets_semantic,
+)
 from netbrace.reporting import baselines as bl
 from netbrace.reporting.baselines import KeySets, grade_keysets
 from netbrace.reporting.sweep_aggregate import (
@@ -140,18 +144,53 @@ def resolve_temperature(model: str, override: float | None) -> float | None:
 
 _REROUTE_PREFIXES = tuple(p for (_m, _f, p) in scenarios.REROUTE_GENERATORS)
 
-# Families whose bypass/no_op twins differ in EDIT KIND (bypass ADDS a line, no_op
-# MODIFIES one) -> a diff-line-COUNT probe separates trap from no_op with zero routing
-# reasoning (the residual leak the 2026-06-15 positional-leak fix flagged as needing
-# structural rework). Held OUT of the NetBrace-Detect HEADLINE (still reported as the
-# `reroute_detect_all13` diagnostic in summary.json) so the showcased headline is robust
-# to a line-count probe, until the edit-kind asymmetry is fixed in those generators.
-REROUTE_DIFFSHAPE_LEAKY = frozenset({"far_as_prepend", "remove_dead_prepend", "origin_code"})
+# Families held OUT of the NetBrace-Detect HEADLINE because a zero-reasoning mechanical
+# probe separates their bypass/no_op twins. As of the 2026-06-15 leak-fix-2 round, ALL 13
+# families are leak-free at production scale (best single-feature probe <= floor AND <=
+# permutation-null p99 — codified by tests/unit/test_reroute_probe_leak.py and
+# oracle-re-verified in runs/oracle_verify_leakfix2_20260615/), so the set is EMPTY and
+# every family is in the headline. Re-add a family here only if the probe guard catches a
+# regression; the `reroute_detect_all13` diagnostic is then the all-13 cross-check.
+REROUTE_DIFFSHAPE_LEAKY = frozenset()
 
 
 def _is_reroute_instance(instance_id: str) -> bool:
     """True if this templated instance is one of the 13 quiet-reroute mechanisms."""
     return instance_id.startswith(_REROUTE_PREFIXES)
+
+
+def _grade_instance(pred: KeySets, truth: KeySets, *,
+                    instance_id: str,
+                    is_trap: bool,
+                    task_id: str,
+                    valid_prediction: bool = True,
+                    cfg_prefixes: set[str] | None = None) -> tuple[object, str]:
+    """Route to the correct grader based on instance type.
+
+    Reroute instances (those with hidden /32 D4/D10 probes) are graded with
+    grade_keysets_semantic: a /24-naming reasoner that correctly names the
+    config-visible covering prefix scores ~1.0 on waypoint/intent instead of 0.0
+    under the exact grader. All other instances use grade_keysets (exact).
+
+    Returns (ExtendedScoreRecord, grader_name_str) so the caller can record
+    grader provenance per-record.
+    """
+    if _is_reroute_instance(instance_id):
+        sr = grade_keysets_semantic(
+            pred, truth,
+            config_prefixes=cfg_prefixes if cfg_prefixes is not None else set(),
+            is_trap=is_trap,
+            task_id=task_id,
+            valid_prediction=valid_prediction,
+        )
+        return sr, "grade_keysets_semantic"
+    sr = grade_keysets(
+        pred, truth,
+        is_trap=is_trap,
+        task_id=task_id,
+        valid_prediction=valid_prediction,
+    )
+    return sr, "grade_keysets"
 
 
 def build_instances(split: str, n_generated: int, seed: int,
@@ -712,6 +751,21 @@ def run_sweep(args) -> dict:
     # paid result can be audited end-to-end (prompt -> raw response -> grade)
     # without re-running anything. responses.jsonl holds the raw model text;
     # instances.jsonl holds the question + the answer key.
+    #
+    # Also cache the no_tools prompt text so reroute instances can extract their
+    # config-visible prefixes for semantic grading in step 2 (M-A: grade reroute
+    # instances with grade_keysets_semantic, which needs the prompt to extract the
+    # credit band — the /32 probes are hidden from the prompt, so a /24-naming
+    # reasoner scores ~1.0 under the semantic grader instead of 0.5 under exact).
+    prompt_cache: dict[str, str] = {}  # instance_id -> no_tools prompt text
+    for inst in instances:
+        prompt_cache[inst.instance_id] = _prompt_for(inst.scn, None)
+    # config-visible prefix set per instance — pre-computed once, shared across all
+    # model samples and the baseline grading step (zero extra overhead per sample).
+    cfg_prefixes_by_instance: dict[str, set[str]] = {
+        iid: config_visible_prefixes(prompt)
+        for iid, prompt in prompt_cache.items()
+    }
     with (out_dir / "instances.jsonl").open("w", encoding="utf-8") as fh:
         for inst in instances:
             fh.write(json.dumps({
@@ -791,15 +845,24 @@ def run_sweep(args) -> dict:
                             {"model": model, "condition": cond,
                              "instance": inst.instance_id, "sample": s,
                              "valid": pred is not None, "raw": raw}) + "\n")
-                    sr = grade_keysets(
+                    # M-A: reroute instances use the SEMANTIC grader (D4/D10 truth is
+                    # hidden /32 probes; a /24-naming reasoner must not be penalised
+                    # for naming the config-visible covering prefix). All other
+                    # instances use grade_keysets (exact). Provenance is recorded in
+                    # the result row ("grader" field) and in the manifest.
+                    sr, _grader = _grade_instance(
                         pred if pred is not None else bl.empty_keysets(),
-                        truth, is_trap=inst.is_trap,
+                        truth,
+                        instance_id=inst.instance_id,
+                        is_trap=inst.is_trap,
                         task_id=f"{inst.instance_id}|{model}|{cond}|s{s}",
                         valid_prediction=pred is not None,
+                        cfg_prefixes=cfg_prefixes_by_instance.get(inst.instance_id),
                     )
                     d = sr.model_dump()
                     d["cost"] = cost
                     d["gt_empty"] = gt_empty[inst.instance_id]
+                    d["grader"] = _grader
                     recs.append(d)
                     if MODEL_REGISTRY[model]["paid"]:
                         print(f"[call] {model} {cond} {inst.instance_id} s{s} "
@@ -836,10 +899,16 @@ def run_sweep(args) -> dict:
                 continue  # undefined: modal of a single instance == its own GT
             truth = truth_by_instance[inst.instance_id]
             pred = _baseline_pred(bname, inst, truth, modal_by_class)
-            sr = grade_keysets(pred, truth, is_trap=inst.is_trap,
-                               task_id=f"{inst.instance_id}|baseline_{bname}")
+            sr, _grader = _grade_instance(
+                pred, truth,
+                instance_id=inst.instance_id,
+                is_trap=inst.is_trap,
+                task_id=f"{inst.instance_id}|baseline_{bname}",
+                cfg_prefixes=cfg_prefixes_by_instance.get(inst.instance_id),
+            )
             d = sr.model_dump()
             d["gt_empty"] = gt_empty[inst.instance_id]
+            d["grader"] = _grader
             # baselines are deterministic -> N=1 "sample" per instance.
             per_split[inst.split][inst.instance_id] = [d]
             results_fh.write(json.dumps(
@@ -954,6 +1023,15 @@ def _manifest(args, models, instances, total_cost, ts, quarantined=()) -> dict:
         "aggregation": "scenario-level two-stage (per-instance mean over N samples, "
                        "then mean+/-std across instances); splits reported separately; "
                        "NOT pooled-i.i.d.",
+        # M-A grader provenance: reroute instances (gen_*) use grade_keysets_semantic
+        # so a /24-naming reasoner is credited for naming the config-visible covering
+        # prefix of the hidden /32 probe. All other instances use grade_keysets (exact).
+        # Each result row also carries a "grader" field for per-record auditability.
+        "grader_routing": {
+            "reroute_instances": "grade_keysets_semantic",
+            "all_other_instances": "grade_keysets",
+            "reroute_detect_grader": "grade_keysets_semantic",
+        },
     }
 
 
@@ -1056,10 +1134,12 @@ def render_table(summary: dict, models: list[str], splits: list[str]) -> str:
                        "no_op_FAR = false-alarm rate on the diff-shape-identical no_op "
                        "calibration twins. THIS is the reroute headline — macro_f1_damage "
                        "is gameable for this split (it drops the no_op twins). Headline is "
-                       "pooled over the leak-free families; far_as_prepend / "
-                       "remove_dead_prepend / origin_code are HELD OUT (residual "
-                       "diff-line-count leak) and reported as reroute_detect_all13 in "
-                       "summary.json.")
+                       "MACRO-averaged over all 13 leak-free families (equal family weight; "
+                       "each verified <= permutation-null p99 against a single-feature probe, "
+                       "test_reroute_probe_leak.py); reroute_detect_all13 mirrors it as a "
+                       "cross-check. Grader: grade_keysets_semantic (reroute instances) "
+                       "— D4/D10 truth is hidden /32 probes; config-visible prefix credit "
+                       "is required for a valid score. Provenance: manifest[grader_routing].")
             out.append("")
         out.append("FSA_rate = false_session_alarm rate: fraction of samples that "
                    "hallucinate a BGP session loss when none occurred. "

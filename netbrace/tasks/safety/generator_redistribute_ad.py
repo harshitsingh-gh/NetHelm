@@ -236,13 +236,17 @@ class _Topo:
     ip: dict[tuple[str, str], str]
     customer_prefix: str
     customer_ip: str
-    # The benign placeholder /30 the redistribution scope points at when it is NOT
-    # the customer /24 (alt's own connected eth2 /30 supernet). A real, present prefix
-    # so the route-map/prefix-list is non-vacuous (it matches alt's connected route),
-    # yet it is NOT the customer /24, so no AD-shadow copy of the customer prefix
-    # reaches src. A SECOND distinct placeholder is used by scope_redist/no_op.
-    placeholder_a: str   # alt-dst /30 supernet
-    placeholder_b: str   # src-alt /30 supernet
+    # Two OFF-PATH /24 DECOYS the redistribution scope points at when it is NOT the
+    # customer /24 (FB-4 mask-length leak fix). Each is a real /24 alt holds on its OWN
+    # connected dummy interface, so the prefix-list match is non-vacuous (it matches alt's
+    # connected route) yet is NOT the customer /24 -> redistributing it injects NO AD-shadow
+    # copy of the customer prefix at src. Crucially each is a /24 (SAME mask as the customer
+    # /24), so mask length carries zero bypass/no_op label info; the discriminator is WHICH
+    # /24 (on-path customer vs off-path decoy), which needs routing reasoning.
+    decoy_a_ip: str      # host IP of decoy /24 A (alt dummy dum1)
+    decoy_b_ip: str      # host IP of decoy /24 B (alt dummy dum2)
+    placeholder_a: str   # decoy /24 A "<net>.0/24"
+    placeholder_b: str   # decoy /24 B "<net>.0/24"
 
 
 def _supernet30(addr_off1: str) -> str:
@@ -277,13 +281,27 @@ def _build_topo(spec: RedistributeAdSpec, params: _Params) -> _Topo:
     customer_prefix = f"{params.customer_net}.0/24"
     customer_ip = f"{params.customer_net}.1"
 
-    # Placeholders: alt's two connected /30 supernets (both are real connected routes
-    # on alt, so the prefix-list match is non-vacuous, but neither is the customer /24).
-    placeholder_a = _supernet30(ip[("alt", "dst")])   # alt-dst /30
-    placeholder_b = _supernet30(ip[("alt", "src")])   # src-alt /30
+    # Two OFF-PATH /24 decoys (FB-4 fix), drawn from the SAME customer-prefix pools (a
+    # different third octet than the customer /24) so the decoy /24 and the customer /24
+    # share ADDRESS FAMILY -> a "which /8 / which pool?" probe carries no label info. Only
+    # WHICH /24 (the on-path customer vs an off-path decoy) separates bypass from no_op.
+    a, b, c = params.customer_net.split(".")
+    decoy_a_net = f"{a}.{b}.{(int(c) + 11) % 256}"
+    decoy_b_net = f"{a}.{b}.{(int(c) + 23) % 256}"
+    # guard: never alias the customer /24 (distinct third octet by construction above,
+    # but assert in case of wrap collisions on the boundary).
+    if decoy_a_net == params.customer_net:
+        decoy_a_net = f"{a}.{b}.{(int(c) + 37) % 256}"
+    if decoy_b_net in (params.customer_net, decoy_a_net):
+        decoy_b_net = f"{a}.{b}.{(int(c) + 53) % 256}"
+    decoy_a_ip = f"{decoy_a_net}.1"
+    decoy_b_ip = f"{decoy_b_net}.1"
+    placeholder_a = f"{decoy_a_net}.0/24"
+    placeholder_b = f"{decoy_b_net}.0/24"
 
     return _Topo(params=params, spec=spec, name=name, loopback=loopback, ip=ip,
                  customer_prefix=customer_prefix, customer_ip=customer_ip,
+                 decoy_a_ip=decoy_a_ip, decoy_b_ip=decoy_b_ip,
                  placeholder_a=placeholder_a, placeholder_b=placeholder_b)
 
 
@@ -396,10 +414,17 @@ def _alt_config(topo: _Topo, *, redist_present: bool, redist_match: str) -> str:
     lo = topo.loopback["alt"]
     eth = [("eth1", f"{topo.ip[('alt', 'src')]}/30"),
            ("eth2", f"{topo.ip[('alt', 'dst')]}/30")]
-    body = [_iface_header(topo.name["alt"], lo, eth, []), _frr_header(topo.name["alt"])]
+    # Two OFF-PATH /24 decoys on connected dummies (FB-4 mask fix): real present
+    # routes the redistribution prefix-list can point at, both /24 (same mask as the
+    # customer /24) so mask length carries no label info; neither is the customer /24,
+    # so a redistribute filtered to them injects no customer-prefix OSPF copy at src.
+    decoys = [("dum1", f"{topo.decoy_a_ip}/24"), ("dum2", f"{topo.decoy_b_ip}/24")]
+    body = [_iface_header(topo.name["alt"], lo, eth, decoys), _frr_header(topo.name["alt"])]
     body.append(f"interface lo\n ip address {lo}/32\n ip ospf area 0\n!\n")
     body.append(_ospf_iface("eth1", f"{topo.ip[('alt', 'src')]}/30"))   # OSPF underlay
     body.append(_plain_iface("eth2", f"{topo.ip[('alt', 'dst')]}/30"))  # eBGP link, no OSPF
+    body.append(_plain_iface("dum1", f"{topo.decoy_a_ip}/24"))          # off-path decoy /24 A
+    body.append(_plain_iface("dum2", f"{topo.decoy_b_ip}/24"))          # off-path decoy /24 B
     # REDIST_PL: the (knob-controlled) network the redistribution route-map matches.
     body.append(f"ip prefix-list REDIST_PL seq 5 permit {redist_match}\n!\n")
     # CUST_DENY_PL: ALWAYS the customer /24 — the FIXED filter that stops alt from

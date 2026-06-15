@@ -212,6 +212,8 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    alt_post: int            # alt prepend count AFTER the edit (the ADDED count; both twins)
+    alt_pre: int             # alt prepend count BEFORE the edit (the REMOVED count; both twins)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -234,9 +236,20 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # COUNT-SYMMETRY (prepend-count/delta leak fix): BOTH twins MODIFY the ALT prepend
+    # from alt_pre -> alt_post with the SAME per-seed count distribution; only the WAY-side
+    # FIXED count W (an UNCHANGED line, set per-effect in the renderer) realizes the routing
+    # outcome (W = alt_post -> equalize -> MED -> alt wins, the trap; W = alt_post - 1 -> alt
+    # stays strictly longer -> way wins, inert). Drawn LAST so addressing is byte-stable.
+    #   alt_post in {2,3} (>=2 so the no_op W = alt_post-1 >= 1); alt_pre = alt_post + offset,
+    #   offset in {1,2}, so alt_pre in {3,4,5} and PRE way (W <= alt_post) < alt_pre.
+    alt_post = rng.choice((2, 3))
+    alt_pre = alt_post + rng.choice((1, 2))
+
     return _Params(src_asn=src_asn, up_asn=up_asn, dst_asn=dst_asn,
                    loop_block=loop_block, link_block=link_block,
-                   customer_net=customer_net, name=name)
+                   customer_net=customer_net, name=name,
+                   alt_post=alt_post, alt_pre=alt_pre)
 
 
 # --------------------------------------------------------------------------- #
@@ -339,12 +352,19 @@ def _frr_header(node_name: str) -> str:
 # src's INBOUND route-map toward alt; src applies no LP (equal preference) so the
 # decision falls to AS-path then MED.
 # --------------------------------------------------------------------------- #
+def _way_fixed_count(topo: _Topo) -> int:
+    """The WAY-side FIXED prepend count W (an UNCHANGED line). bypass: W = alt_post (so the
+    alt edit equalizes -> AS-path tie -> latent MED decides -> alt wins). no_op: W =
+    alt_post - 1 (alt_post > W -> alt stays strictly longer -> way wins -> inert)."""
+    return topo.params.alt_post if topo.spec.effect == "bypass" else topo.params.alt_post - 1
+
+
 def _alt_inbound_prepend_count(topo: _Topo) -> int:
     """Number of prepends on src's alt inbound map for THIS knob/effect baseline."""
     # Baseline always has TWO prepends on the alt path (so a no_op can trim one and
     # still leave a strict gap). For dst_outbound the prepend lives elsewhere, so src
     # has NONE.
-    return 2 if topo.spec.knob == "alt_inbound" else 0
+    return topo.params.alt_pre if topo.spec.knob == "alt_inbound" else 0
 
 
 def _src_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
@@ -360,6 +380,17 @@ def _src_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
 
     body = [ib, _frr_header(topo.name["src"]), fb]
 
+    # WAY session inbound: a FIXED ONE prepend (the equalization target). Only emitted
+    # for the alt_inbound knob (where the prepends live on src). This makes way's
+    # AS-path length 1, so the bypass equalizes alt to 1 (tie -> MED) and the no_op
+    # grows alt to 3 (inert), BOTH as one-line MODIFIES of the alt map -- never as an
+    # add/delete asymmetry (the edit-kind-symmetry / line-count leak fix).
+    if topo.spec.knob == "alt_inbound":
+        way_prep = " ".join(str(p.up_asn) for _ in range(_way_fixed_count(topo)))
+        body.append(
+            "route-map RM_UPLINK1_IN permit 10\n"
+            f" set as-path prepend {way_prep}\n!\n"
+        )
     # Inbound map on the alt session. For the alt_inbound knob the dead prepend lives
     # here; the bypass deletes the prepend line, the no_op trims it to one. For the
     # dst_outbound knob src applies no inbound prepend at all (alt_prepends == 0) — but
@@ -380,6 +411,8 @@ def _src_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
     body.append(f" neighbor {topo.ip[('alt', 'src')]} remote-as {p.up_asn}\n")
     body.append(" !\n address-family ipv4 unicast\n")
     body.append(f"  network {topo.loopback['src']}/32\n")
+    if topo.spec.knob == "alt_inbound":
+        body.append(f"  neighbor {topo.ip[('way', 'src')]} route-map RM_UPLINK1_IN in\n")
     body.append(f"  neighbor {topo.ip[('alt', 'src')]} route-map RM_UPLINK2_IN in\n")
     body.append(" exit-address-family\n!\nline vty\n!\n")
     return "".join(body)
@@ -420,7 +453,7 @@ def _upstream_config(topo: _Topo, role: str, *, dst_alt_prepends: Optional[int] 
 # places the dead prepend on dst's OUTBOUND map toward the alt egress.
 # --------------------------------------------------------------------------- #
 def _dst_outbound_prepend_count(topo: _Topo) -> int:
-    return 2 if topo.spec.knob == "dst_outbound" else 0
+    return topo.params.alt_pre if topo.spec.knob == "dst_outbound" else 0
 
 
 def _dst_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
@@ -436,6 +469,15 @@ def _dst_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
     ib, fb = _ifaces_intf_text(topo.name["dst"], topo.loopback["dst"], eth, dummies)
     body = [ib, _frr_header(topo.name["dst"]), fb]
 
+    # WAY-facing outbound: a FIXED ONE prepend (the equalization target) for the
+    # dst_outbound knob, so the bypass MODIFIES the alt prepend 2 -> 1 (equalize -> MED)
+    # and the no_op MODIFIES it 2 -> 3 (inert) -- both one-line modifies (line-count fix).
+    if topo.spec.knob == "dst_outbound":
+        way_prep = " ".join(str(p.dst_asn) for _ in range(_way_fixed_count(topo)))
+        body.append(
+            "route-map TO_WAY_OUT permit 10\n"
+            f" set as-path prepend {way_prep}\n!\n"
+        )
     # Outbound map toward the alt egress. For the dst_outbound knob the dead prepend
     # lives here; bypass deletes it, no_op trims it to one. For the alt_inbound knob dst
     # applies no outbound prepend (alt_prepends == 0) but we still emit the permit-10
@@ -456,6 +498,8 @@ def _dst_config(topo: _Topo, *, alt_prepends: Optional[int] = None) -> str:
     body.append(" !\n address-family ipv4 unicast\n")
     body.append(f"  network {topo.loopback['dst']}/32\n")
     body.append(f"  network {topo.customer_prefix}\n")
+    if topo.spec.knob == "dst_outbound":
+        body.append(f"  neighbor {topo.ip[('way', 'dst')]} route-map TO_WAY_OUT out\n")
     body.append(f"  neighbor {topo.ip[('alt', 'dst')]} route-map TO_ALT_OUT out\n")
     body.append(" exit-address-family\n!\nline vty\n!\n")
     return "".join(body)
@@ -471,22 +515,28 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
-# The change: DELETE (bypass) or TRIM (no_op) the dead prepend. One node touched.
+# The change: a one-line MODIFY of the alt prepend count. EDIT-KIND-SYMMETRIC (line-count
+# leak fix): bypass shortens 2 -> 1 (equalize with the way side's FIXED 1 -> AS-path tie ->
+# latent MED decides -> alt wins); no_op lengthens 2 -> 3 (alt still strictly longer -> way
+# wins -> inert). BOTH are a single +1/-1 modify; neither adds nor deletes a line, so the
+# diff +/- line count carries zero bypass/no_op label info. One node touched.
 # --------------------------------------------------------------------------- #
 def _apply_change(topo: _Topo) -> tuple[str, str]:
     """Return (change_target_node_name, unified-diff) for this (knob, effect)."""
     knob, effect = topo.spec.knob, topo.spec.effect
+    # BOTH twins MODIFY the alt prepend alt_pre -> alt_post (IDENTICAL count distribution);
+    # only the WAY-side fixed count W (cross-config, in _way_fixed_count) differs, realizing
+    # the outcome: bypass equalizes (W == alt_post), no_op leaves alt strictly longer.
+    new_count = topo.params.alt_post
 
     if knob == "alt_inbound":
         node = topo.name["src"]
-        before = _src_config(topo)                       # 2 prepends
-        # bypass: delete the whole prepend clause (2 -> 0) -> AS-path equalizes -> MED.
-        # no_op : trim to ONE prepend (2 -> 1) -> alt still strictly longer -> inert.
-        after = _src_config(topo, alt_prepends=0 if effect == "bypass" else 1)
+        before = _src_config(topo)                       # 2 prepends on alt
+        after = _src_config(topo, alt_prepends=new_count)
     else:  # dst_outbound
         node = topo.name["dst"]
-        before = _dst_config(topo)                       # 2 prepends
-        after = _dst_config(topo, alt_prepends=0 if effect == "bypass" else 1)
+        before = _dst_config(topo)                       # 2 prepends on alt
+        after = _dst_config(topo, alt_prepends=new_count)
 
     if before == after:
         raise RuntimeError(
@@ -514,13 +564,12 @@ def _unified(before: str, after: str, node: str) -> str:
 # --------------------------------------------------------------------------- #
 def _description(topo: _Topo) -> str:
     knob, effect = topo.spec.knob, topo.spec.effect
-    # bypass removes the entire prepend clause; no_op shortens it from two prepends to
-    # one. The sentence shape is identical so style cannot distinguish the two.
-    verb = (
-        "remove the `set as-path prepend` clause"
-        if effect == "bypass"
-        else "shorten the `set as-path prepend` clause from two entries to one"
-    )
+    # BOTH twins SHORTEN the alt `set as-path prepend` clause (alt_pre -> alt_post); the
+    # sentence shape and verb are IDENTICAL across bypass/no_op, so neither the prose nor a
+    # diff count feature distinguishes them -- only reading the WAY-side fixed prepend count
+    # (cross-config) reveals whether the shortened alt count now EQUALS the way count
+    # (equalize -> the latent MED decides) or stays above it (inert). Routing reasoning only.
+    verb = "shorten the `set as-path prepend` clause by one or more entries"
     if knob == "alt_inbound":
         node = topo.name["src"]
         return (

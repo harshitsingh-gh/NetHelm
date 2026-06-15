@@ -243,6 +243,13 @@ class _Topo:
     customer_ip: str           # the customer host inside the /25, "<net>.1"
     steering_prefix: str       # the steering more-specific "<net>.0/25"
     steering_ip: str           # a host inside the /25 for way's connected origin
+    # M-D leak fix: an OFF-PATH decoy /24 + its contributing more-specific that `way` also
+    # originates, so the no_op can `aggregate-address <decoy/24> summary-only` (same token
+    # as the bypass) yet stay inert: suppressing the decoy more-specific does not move the
+    # customer host's LPM (the customer steering /25 is untouched) and the decoy is unwatched.
+    decoy_prefix: str          # the decoy covering /24 "<dnet>.0/24"
+    decoy_ms_prefix: str       # the decoy contributing more-specific "<dnet>.0/{ms}"
+    decoy_ms_ip: str           # a host way owns inside the decoy more-specific
 
 
 def _build_topo(spec: AggCollapseSpec, params: _Params) -> _Topo:
@@ -273,9 +280,22 @@ def _build_topo(spec: AggCollapseSpec, params: _Params) -> _Topo:
     steering_prefix = f"{params.customer_net}.0/{ms_len}"  # the steering more-specific
     steering_ip = f"{params.customer_net}.2"         # a distinct host way owns in the MS
 
+    # Decoy /24 + decoy more-specific (M-D fix), from the SAME customer pool family (a
+    # different third octet) so the decoy /24's ADDRESS FAMILY carries no label info; the
+    # only discriminator stays WHICH /24 the summary-only aggregate covers.
+    a, b, c = params.customer_net.split(".")
+    decoy_net = f"{a}.{b}.{(int(c) + 17) % 256}"
+    if decoy_net == params.customer_net:
+        decoy_net = f"{a}.{b}.{(int(c) + 41) % 256}"
+    decoy_prefix = f"{decoy_net}.0/24"
+    decoy_ms_prefix = f"{decoy_net}.0/{ms_len}"
+    decoy_ms_ip = f"{decoy_net}.2"
+
     return _Topo(params=params, spec=spec, name=name, loopback=loopback, ip=ip,
                  customer_prefix=customer_prefix, customer_ip=customer_ip,
-                 steering_prefix=steering_prefix, steering_ip=steering_ip)
+                 steering_prefix=steering_prefix, steering_ip=steering_ip,
+                 decoy_prefix=decoy_prefix, decoy_ms_prefix=decoy_ms_prefix,
+                 decoy_ms_ip=decoy_ms_ip)
 
 
 # --------------------------------------------------------------------------- #
@@ -350,12 +370,14 @@ def _way_config(topo: _Topo, *, aggregate: Optional[list[str]] = None) -> str:
     ms_len = _MS_LEN[topo.spec.granularity]
     eth = [("eth1", f"{topo.ip[('way', 'src')]}{_LINK_MASK}"),
            ("eth2", f"{topo.ip[('way', 'dst')]}{_LINK_MASK}")]
-    dummies = [("dum0", f"{topo.steering_ip}/{ms_len}")]
+    dummies = [("dum0", f"{topo.steering_ip}/{ms_len}"),
+               ("dum1", f"{topo.decoy_ms_ip}/{ms_len}")]   # decoy more-specific (M-D fix)
     body = [_iface_header(topo.name["way"], lo, eth, dummies), _frr_header(topo.name["way"])]
     body.append(_plain_iface("lo", f"{lo}/32"))
     body.append(_plain_iface("eth1", f"{topo.ip[('way', 'src')]}{_LINK_MASK}"))
     body.append(_plain_iface("eth2", f"{topo.ip[('way', 'dst')]}{_LINK_MASK}"))
     body.append(_plain_iface("dum0", f"{topo.steering_ip}/{ms_len}"))
+    body.append(_plain_iface("dum1", f"{topo.decoy_ms_ip}/{ms_len}"))
     body.append(f"router bgp {p.asn['way']}\n")
     body.append(f" bgp router-id {lo}\n")
     body.append(f" neighbor {topo.ip[('src', 'way')]} remote-as {p.asn['src']}\n")
@@ -363,6 +385,7 @@ def _way_config(topo: _Topo, *, aggregate: Optional[list[str]] = None) -> str:
     body.append(" !\n address-family ipv4 unicast\n")
     body.append(f"  network {lo}/32\n")
     body.append(f"  network {topo.steering_prefix}\n")   # the steering /25 (way's own)
+    body.append(f"  network {topo.decoy_ms_prefix}\n")   # the decoy more-specific (M-D fix)
     for line in (aggregate or []):
         body.append(line + "\n")
     body.append(" exit-address-family\n!\nline vty\n!\n")
@@ -431,15 +454,20 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 def _aggregate_lines(topo: _Topo) -> list[str]:
     """Return the address-family aggregate-address line(s) the change adds on ``way``.
 
-    bypass: ``aggregate-address <c/24> summary-only`` (suppresses the steering MS — the
-            Batfish-modeled blanket suppression).
-    no_op : a bare ``aggregate-address <c/24>`` (originates the /24 aggregate but does NOT
-            suppress the steering MS — the ``summary-only`` keyword is the whole diff).
+    M-D LEAK FIX: BOTH twins now use ``summary-only`` so a grep-for-``summary-only`` probe
+    no longer separates them. The discriminator is WHICH /24 the summary-only aggregate
+    covers (which more-specific it suppresses), requiring LPM reasoning, not a keyword grep:
+
+      bypass: ``aggregate-address <customer/24> summary-only`` — suppresses way's STEERING
+              more-specific (the one the customer host LPM-matches), so src's LPM falls back
+              to the /24 and the host bypasses way. THE trap.
+      no_op : ``aggregate-address <decoy/24> summary-only`` — suppresses way's OFF-PATH
+              DECOY more-specific (unwatched, not on the customer host's LPM path), so the
+              customer steering /25 survives, the host still LPM-matches it and still transits
+              way. Genuinely inert; textually identical in the ``summary-only`` token.
     """
-    c24 = topo.customer_prefix
-    if topo.spec.effect == "bypass":
-        return [f"  aggregate-address {c24} summary-only"]
-    return [f"  aggregate-address {c24}"]
+    target = topo.customer_prefix if topo.spec.effect == "bypass" else topo.decoy_prefix
+    return [f"  aggregate-address {target} summary-only"]
 
 
 def _apply_change(topo: _Topo) -> str:
@@ -474,11 +502,15 @@ def _unified(before: str, after: str, node: str) -> str:
 # --------------------------------------------------------------------------- #
 def _description(topo: _Topo) -> str:
     way = topo.name["way"]
-    c24 = topo.customer_prefix
-    clause = " summary-only" if topo.spec.effect == "bypass" else ""
+    # BOTH twins add `aggregate-address <a/24> summary-only`; the named /24 is the customer
+    # prefix (bypass) or an off-path decoy /24 (no_op). The prose names only the stanza added
+    # and the /24 it covers, never which more-specific it suppresses or whether the path moves
+    # -- the `summary-only` token is now IDENTICAL across twins (M-D leak fix), so the prose
+    # cannot betray the label either.
+    target = topo.customer_prefix if topo.spec.effect == "bypass" else topo.decoy_prefix
     return (
         f"On `{way}` (AS{topo.params.asn['way']}), add a single "
-        f"`aggregate-address {c24}{clause}` stanza under the BGP IPv4 unicast "
+        f"`aggregate-address {target} summary-only` stanza under the BGP IPv4 unicast "
         f"address-family — a routine table-hygiene/summarization edit. See the diff."
     )
 

@@ -190,6 +190,7 @@ class _Params:
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
     swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
+    w_base: int              # way map BASELINE prepend count (the REMOVED count; both twins)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -212,12 +213,22 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # EDIT-KIND + COUNT-SYMMETRY (line-count + prepend-count leak fix): BOTH twins edit
+    # the SAME (way-facing) outbound prepend map, modifying its count from w_base ->
+    # new_count. The (removed, added, delta) prepend-token counts are therefore drawn from
+    # the SAME per-seed distribution for bypass and no_op; only the ALT map's baseline count
+    # (an UNCHANGED line, set per-effect below) realizes the routing outcome. So no diff-only
+    # count feature separates the label -- only reading the alt count (cross-config) does.
+    #   w_base in {1,2} is the REMOVED count; the NEW count = w_base + pre_depth + 1 (so it
+    #   spans {3,4,5} across seeds/axes). The ALT baseline is set per-effect in _dst_config.
+    w_base = rng.choice((1, 2))
+
     # Per-seed ROLE->POSITION swap (positional-leak fix), drawn LAST so addressing is
     # byte-stable; decides which PHYSICAL slot the waypoint `way` vs bypass `alt` holds.
     swap = _rp.draw_swap(rng)
 
     return _Params(asn=asn, loop_block=loop_block, link_block=link_block,
-                   customer_net=customer_net, name=name, swap=swap)
+                   customer_net=customer_net, name=name, swap=swap, w_base=w_base)
 
 
 # --------------------------------------------------------------------------- #
@@ -357,11 +368,33 @@ def _prepend_line(asn: int, times: int) -> str:
     return " set as-path prepend " + " ".join([str(asn)] * times)
 
 
-def _dst_config(topo: _Topo) -> str:
+def _count_plan(topo: _Topo) -> tuple[int, int, int]:
+    """Return (way_pre, alt_pre, way_post) prepend counts for this (spec, params).
+
+    Both twins MODIFY the WAY map from ``way_pre`` (= w_base, the REMOVED count) to
+    ``way_post`` (= w_base + pre_depth + 1, the ADDED count) -- IDENTICAL count distributions
+    across bypass/no_op. The ALT baseline (an UNCHANGED line) is what realizes the outcome:
+      * bypass: alt_pre = way_post - 1  -> PRE way (w_base) < alt; POST way (way_post) > alt
+                -> way becomes the LONGEST AS_PATH -> alt wins -> waypoint moves. THE trap.
+      * no_op : alt_pre = way_post + 1  -> PRE way < alt; POST way (way_post) still < alt
+                -> winner unchanged -> empty GT. The calibration twin.
+    The diff (way map w_base -> way_post) is statistically identical in every count feature
+    across the two effects; only the alt count (cross-config) separates them.
+    """
+    w = topo.params.w_base
+    way_post = w + topo.spec.pre_depth + 1          # in {3,4,5}; the ADDED count
+    alt_pre = way_post - 1 if topo.spec.effect == "bypass" else way_post + 1
+    return w, alt_pre, way_post
+
+
+def _dst_config(topo: _Topo, *, way_count: Optional[int] = None) -> str:
     p = topo.params
     lo = topo.loopback["dst"]
     dst_asn = p.asn["dst"]
     pre = topo.spec.pre_depth
+    way_pre, alt_pre, _way_post = _count_plan(topo)
+    if way_count is None:
+        way_count = way_pre
     # dst's two upstream-facing interfaces are ordered by the PHYSICAL slot of the
     # upstream role (slot-2 role -> eth1, slot-3 role -> eth2); each outbound prepend
     # route-map is named after the UPSTREAM NODE NAME (swapped per seed). The baseline
@@ -378,9 +411,12 @@ def _dst_config(topo: _Topo) -> str:
     body.append(_plain_iface("eth1", f"{topo.ip[('dst', lo_role)]}{_LINK_MASK}"))
     body.append(_plain_iface("eth2", f"{topo.ip[('dst', hi_role)]}{_LINK_MASK}"))
     body.append(f"interface dum0\n ip address {topo.customer_ip}/24\n!\n")
-    # Outbound prepend maps, in physical-slot order. Toward `way`: plain permit (no
-    # prepend) baseline; toward `alt`: prepend dst's own ASN `pre_depth` times.
-    prepend_of = {"way": [], "alt": [_prepend_line(dst_asn, pre)]}
+    # Outbound prepend maps, in physical-slot order. The WAY map carries ``way_count``
+    # prepends (= w_base in the baseline, w_base+pre_depth+1 in the POST -- the ONLY edited
+    # map, identical count distribution across both effects). The ALT map carries
+    # ``alt_pre`` (the UNCHANGED line whose value alone realizes the bypass/no_op outcome).
+    prepend_of = {"way": [_prepend_line(dst_asn, way_count)],
+                  "alt": [_prepend_line(dst_asn, alt_pre)]}
     for r in (lo_role, hi_role):
         lines = "".join(l + "\n" for l in prepend_of[r])
         body.append(f"route-map {rm_name[r]} permit 10\n" + lines + "!\n")
@@ -422,31 +458,21 @@ def _apply_change(topo: _Topo) -> str:
     dst_asn = topo.params.asn["dst"]
     before = _dst_config(topo)
 
-    if effect == "bypass":
-        # Add an outbound prepend toward `way` long enough to make the via-way AS_PATH
-        # STRICTLY longer than the via-alt path. via-alt = 1 (own AS at upstream) +
-        # pre (dst's prepend). via-way must exceed it: prepend dst's ASN (pre + 1)
-        # times toward way -> via-way = 1 + (pre + 1) = pre + 2 > pre + 1. Strict.
-        bypass_times = pre + 1
-        rm = _rm_name(topo, "way")
-        old = f"route-map {rm} permit 10\n!\n"
-        new = (
-            f"route-map {rm} permit 10\n"
-            f"{_prepend_line(dst_asn, bypass_times)}\n!\n"
-        )
-    else:  # no_op
-        # Extend the ALREADY-LONGER prepend toward `alt` (the losing path) by one more
-        # dst-ASN hop. via-alt grows from (1 + pre) to (1 + pre + 1); via-way stays 1.
-        # way is still strictly shorter -> the winner does not move -> empty GT.
-        rm = _rm_name(topo, "alt")
-        old = (
-            f"route-map {rm} permit 10\n"
-            f"{_prepend_line(dst_asn, pre)}\n!\n"
-        )
-        new = (
-            f"route-map {rm} permit 10\n"
-            f"{_prepend_line(dst_asn, pre + 1)}\n!\n"
-        )
+    way_pre, _alt_pre, way_post = _count_plan(topo)
+    rm = _rm_name(topo, "way")
+    # BOTH effects MODIFY the SAME (way-facing) map: way_pre -> way_post. The diff is a
+    # one-line modify with IDENTICAL (removed, added, delta) prepend-token counts across
+    # bypass and no_op; only the UNCHANGED alt count (in _dst_config) realizes the outcome.
+    #   bypass: alt_pre = way_post - 1  -> POST way is the LONGEST -> alt wins -> waypoint moves.
+    #   no_op : alt_pre = way_post + 1  -> POST way still shorter -> winner unchanged -> empty.
+    old = (
+        f"route-map {rm} permit 10\n"
+        f"{_prepend_line(dst_asn, way_pre)}\n!\n"
+    )
+    new = (
+        f"route-map {rm} permit 10\n"
+        f"{_prepend_line(dst_asn, way_post)}\n!\n"
+    )
 
     if old not in before:
         raise RuntimeError(
@@ -481,8 +507,9 @@ def _description(topo: _Topo) -> str:
     which = _rm_name(topo, "way") if effect == "bypass" else _rm_name(topo, "alt")
     return (
         f"On `{dst}` (AS{topo.params.asn['dst']}, the customer-origin AS), edit the "
-        f"outbound eBGP route-map `{which}` to add/extend a `set as-path prepend` "
-        f"clause (an AS_PATH adjustment on the advertisement toward one upstream). "
+        f"outbound eBGP route-map `{which}` to lengthen its `set as-path prepend` "
+        f"clause by one entry (an AS_PATH adjustment on the advertisement toward one "
+        f"upstream). "
         f"See the diff."
     )
 

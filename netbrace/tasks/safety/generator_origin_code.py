@@ -589,26 +589,28 @@ def _apply_change(topo: _Topo) -> str:
     before = _egress_config_for(topo, role,
                                 customer_as_redistribute=pre_customer_redist)
 
+    # PRE origin of the edited egress's customer copy: way=igp (network), alt=incomplete
+    # (redistribute). The bypass FLIPS it (sets the opposite); the no_op HOLDS it (sets the
+    # same). BOTH carry an explicit `set origin <X>` in a redistribute route-map, so the
+    # `set origin` keyword no longer separates the twins -- only X-vs-PRE (reasoning) does.
+    pre_origin = "igp" if role == "way" else "incomplete"
+    flip_origin = "incomplete" if pre_origin == "igp" else "igp"
     if spec.effect == "bypass":
-        # Swap the CUSTOMER /24 origination method WITHOUT an origin pin -> the ORIGIN
-        # code flips (igp<->incomplete) and the §9.1.2.2 (b) tie collapses -> MED decides.
-        after = _egress_config_for(topo, role,
-                                   customer_as_redistribute=(not pre_customer_redist))
-    elif role == "way":
-        # no_op (way): network(igp) -> redistribute static + `set origin igp`. A REAL
-        # method swap, neutralized so the ORIGIN stays igp -> best path unchanged. The
-        # diff removes `network <cust>` and adds the prefix-list + redistribute (both
-        # naming the customer prefix) -> construction-parallel to the bypass.
+        # Re-originate via redistribute static with `set origin <flip>` -> ORIGIN flips ->
+        # the §9.1.2.2 (b) tie collapses -> the latent MED (c) decides -> waypoint moves.
+        # For the way knob this is also a method swap (network -> redistribute); for the alt
+        # knob it is a same-method restatement (redistribute -> redistribute) with the seq
+        # renumbered, exactly mirroring the no_op's shape so only the origin VALUE differs.
         after = _egress_config_for(topo, role, customer_as_redistribute=True,
-                                   origin_pin="igp")
+                                   origin_pin=flip_origin,
+                                   restate_redist=(role == "alt"))
     else:
-        # no_op (alt): redistribute(incomplete) -> redistribute + `set origin incomplete`
-        # with the prefix-list seq renumbered. A same-method restatement, neutralized so
-        # the ORIGIN stays incomplete -> best path unchanged. The seq renumber re-emits a
-        # customer-prefix-naming prefix-list line in the diff -> the no_op diff NAMES the
-        # customer prefix (closing the audit-M3 tell) while remaining best-path-neutral.
+        # no_op: re-originate via redistribute static with `set origin <pre>` -> ORIGIN held
+        # -> best path unchanged -> empty GT. Same construct + shape as the bypass; only the
+        # pinned origin value (== PRE here) differs.
         after = _egress_config_for(topo, role, customer_as_redistribute=True,
-                                   origin_pin="incomplete", restate_redist=True)
+                                   origin_pin=pre_origin,
+                                   restate_redist=(role == "alt"))
 
     if before == after:
         raise RuntimeError(

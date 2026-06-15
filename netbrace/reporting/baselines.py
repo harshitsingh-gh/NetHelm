@@ -120,6 +120,12 @@ def grade_keysets(
     truth_empty = not any(truth_scored.values())
     pred_empty = not any(pred_scored.values())
     false_alarm = is_trap and truth_empty and not pred_empty
+    # is_trap-INDEPENDENT calibration-twin false alarm: any empty-truth instance with a
+    # non-empty prediction. This is what makes the no_op (is_trap=False) FAR computable.
+    # MUST be set here exactly as grade_extended / grade_keysets_semantic do — omitting it
+    # let model_dump() always emit False, which structurally pinned the no_op FAR channel
+    # to 0 on the production sweep path (freeze blocker FB-1, 2026-06-15).
+    empty_truth_false_alarm = truth_empty and not pred_empty
     false_session_alarm = (not truth.get("sessions")) and bool(pred.get("sessions"))
 
     if exact:
@@ -137,6 +143,7 @@ def grade_keysets(
         valid_prediction=valid_prediction,
         is_trap=is_trap,
         false_alarm=false_alarm,
+        empty_truth_false_alarm=empty_truth_false_alarm,
         false_session_alarm=false_session_alarm,
         per_type=per_type,
         macro_f1=macro,

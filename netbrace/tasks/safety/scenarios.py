@@ -736,15 +736,34 @@ def build_generated_suite_multi(n: int, *, base_seed: int = 0) -> list[Scenario]
 
 
 # --------------------------------------------------------------------------- #
-# Quiet-reroute split — the 13 silent-path-shift mechanism generators.
+# Quiet-reroute split — 13 silent-path-shift mechanism generators, covering
+# ~7-8 distinct control-plane DECISION SURFACES x 2 coverage axes.
 #
-# Each of these emits the SAME oracle contract: a ``-bypass`` instance whose change
-# silently moves traffic off a required waypoint (is_trap=True -> live oracle fires
-# {waypoint (D4), intent (D10)}) and a ``-no_op`` calibration twin that preserves the
-# intent (is_trap=False -> EMPTY blast). The 50/50 bypass:no_op ratio (include_noop)
-# is the anti-gaming control: a silent/always-fire predictor cannot game balanced
-# accuracy on it. All 13 share the public ``generate_<X>_suite(n, *, base_seed,
-# include_noop)`` API and prefix their scenario names ``gen_<X>_``.
+# The 13 generators span two structural axes:
+#   Axis 1 (subtraction-polarity): some mechanisms REMOVE a discriminating
+#     config element (next-hop elimination, dead-prepend removal, origin-code
+#     withdrawal) while others ADD or MODIFY one (community->LP, MED, IGP metric).
+#   Axis 2 (foreign/RR locus): RR best-path and some IGP-summary cases trigger
+#     the reroute at a route-reflector or inter-area boundary rather than at the
+#     originating router.
+#
+# The ~7-8 distinct decision surfaces are: (1) AS-PATH length comparator
+# (clause_fallthrough), (2) LOCAL_PREF via community (community_lp,
+# community_trigger), (3) MED tiebreak (med_far_as), (4) IGP metric / hot-potato
+# (igp_metric, igp_summary), (5) NEXT_HOP resolution (nexthop_elim),
+# (6) aggregate suppression (agg_collapse), (7) redistribution admin-distance
+# (redistribute_ad), (8) RR best-path selection (rr_bestpath). far-AS prepend,
+# origin-code, and remove-dead-prepend overlap surface (1)/(3) with a subtraction
+# edit shape, which is why they are cross-verified via the diffshape holdout.
+#
+# Each generator emits the SAME oracle contract: a ``-bypass`` instance whose
+# change silently moves traffic off a required waypoint (is_trap=True -> live
+# oracle fires {waypoint (D4), intent (D10)}) and a ``-no_op`` calibration twin
+# that preserves the intent (is_trap=False -> EMPTY blast). The 50/50
+# bypass:no_op ratio (include_noop) is the anti-gaming control: a
+# silent/always-fire predictor cannot game balanced accuracy on it. All 13 share
+# the public ``generate_<X>_suite(n, *, base_seed, include_noop)`` API and prefix
+# their scenario names ``gen_<X>_``.
 #
 # (module slug, suite function name, name prefix) — the single source of truth the
 # builder, the fake oracle, and the tests all key off.
@@ -777,14 +796,15 @@ def build_generated_suite_reroutes(
 ) -> list[Scenario]:
     """Enumerate ``n`` generated instances across ALL 13 quiet-reroute generators.
 
-    The templated split's silent-path-shift half: 13 distinct mechanisms (aggregate
-    collapse, route-map clause fall-through, community->LP, community trigger, far-AS
-    prepend, IGP metric, IGP summary, MED+far-AS, next-hop elimination, origin code,
-    redistribution AD, dead-prepend removal, RR best-path) that each move traffic off
-    a required waypoint with the BGP/IGP sessions still ESTABLISHED — the blast-radius
-    thesis. Each generator contributes a 50/50 ``-bypass``/``-no_op`` mix (the
-    anti-gaming calibration control; the metric uses BALANCED ACCURACY, so the 50/50
-    ratio is correct — do not skew it).
+    The templated split's silent-path-shift half: 13 generator families covering
+    ~7-8 distinct control-plane DECISION SURFACES x 2 structural axes
+    (subtraction-polarity, foreign/RR locus) — see the REROUTE_GENERATORS block
+    comment for the surface taxonomy. Every family moves traffic off a required
+    waypoint with BGP/IGP sessions still ESTABLISHED — the blast-radius thesis.
+
+    Each generator contributes a 50/50 ``-bypass``/``-no_op`` mix (the anti-gaming
+    calibration control; the metric uses BALANCED ACCURACY, so the 50/50 ratio is
+    correct — do not skew it).
 
     Allocation is round-robin across the 13 so a TRUNCATED prefix (small ``n``) still
     spans every mechanism: position ``i`` draws from generator ``i % 13``, and the

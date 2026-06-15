@@ -992,8 +992,11 @@ Tests: +81 (tests/unit/test_generator_family23.py); full suite **777 passed / 1 
 - `community_lp`: no_op edits a DIFFERENT node than bypass (weak positional tell, like Family-1
   nexthop_elim). Harden the no_op (same-node cosmetic edit).
 
-**v1 catalog now = 13 mechanisms across 3 families** (Family 1 = 4, Family 2 = 7 incl. subtraction
-axis, Family 3 = 2), all FRR-gradeable + oracle-validated. NEXT: design-review the 3 flagged items
+**v1 catalog now = 13 generator families across ~7-8 distinct control-plane DECISION SURFACES x
+2 structural axes** (subtraction-polarity, foreign/RR locus) — Family 1 = 4, Family 2 = 7 incl.
+subtraction axis, Family 3 = 2. All FRR-gradeable + oracle-validated. NOTE: "13 generators" is
+not "13 distinct mechanisms" — the accurate framing is ~7-8 surfaces x 2 axes, with some
+generators sharing a surface but differing in edit shape. NEXT: design-review the 3 flagged items
 (origin_code, community_lp, igp_summary distinctness), then wire generators into the suite/registry
 + sweep (data collection, additive). Deferred per-flow/overlay family stays v1.1/vendor.
 
@@ -1005,7 +1008,8 @@ axis, Family 3 = 2), all FRR-gradeable + oracle-validated. NEXT: design-review t
 trick" reviewer objection). Two fleet workflows (divergence/develop/grade/ground over 15
 mechanisms, then a convergence-vet of the user's `interesting_scenarios.md` delta on the live
 pinned digest) -> frozen catalog `temporary/frozen_quiet_half_scenario_set.md`. Disposition:
-~13 v1-buildable mechanisms across 3 FRR-gradeable families + 2 axes; per-flow/overlay family
+13 generator families covering ~7-8 distinct control-plane DECISION SURFACES x 2 axes (subtraction-
+polarity, foreign/RR locus), across 3 FRR-gradeable families; per-flow/overlay family
 (VRF-RT/PBR/FlowSpec/ADD-PATH/ECMP) DEFERRED — all UNMODELED on Batfish-FRR (live-tested;
 `import vrf` -> "not currently supported", FRR PBR/add-path ungrammared). See memory
 batfish_frr_gradeability_boundary.

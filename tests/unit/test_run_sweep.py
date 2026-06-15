@@ -1,7 +1,11 @@
 """End-to-end (fake oracle, fake model, zero-API) smoke test for the sweep, plus
 the fake_oracle structural-GT checks. Confirms the spec invariants: scenario-level
 aggregation (not pooled), splits reported separately, all baselines present,
-modal_by_class < oracle_ceiling, naive_session_loss trips false_session_alarm."""
+modal_by_class < oracle_ceiling, naive_session_loss trips false_session_alarm.
+
+Also includes the M-A grader-routing gate: oracle_ceiling under the reroute sweep
+must score NetBrace-Detect = 1.0 / Youden_J = 1.0, which requires the semantic
+grader to be wired in-sweep for reroute instances (hidden /32 probes)."""
 
 import importlib.util
 import sys
@@ -122,3 +126,65 @@ def test_sweep_both_conditions_produce_separate_rows(tmp_path, monkeypatch):
     assert "fake @ no_tools" in summary["models"]
     assert "fake @ tools" in summary["models"]
     assert summary["manifest"]["conditions"] == ["no_tools", "tools"]
+
+
+def test_reroute_sweep_semantic_grader_in_sweep(tmp_path, monkeypatch):
+    """M-A gate: oracle_ceiling must score reroute_detect = 1.0 / Youden_J = 1.0
+    on a reroute sweep, which requires the semantic grader to be wired in-sweep
+    for reroute instances (the /32 probes are hidden from the prompt, so the exact
+    grader would pin the oracle ceiling to 0.5 / 0.0).
+
+    Also verifies:
+    - manifest carries grader_routing provenance
+    - every reroute result row has a "grader" field = "grade_keysets_semantic"
+    - non-reroute rows (grounded) carry "grader" = "grade_keysets"
+    """
+    monkeypatch.chdir(tmp_path)
+    args = run_sweep.argparse.Namespace(
+        models="fake", samples=2, split="templated", n_generated=26,
+        seed=0, temperature=0.0, oracle="fake", host="127.0.0.1",
+        condition="no_tools", templated_set="reroutes",
+        coarsen_class=True, exclude="", bypass_fraction=0.5, det_runs=2,
+        limit=0, include="")
+    summary = run_sweep.run_sweep(args)
+
+    # 1. oracle_ceiling must score 1.0/1.0 (the test of correct semantic grading)
+    tmpl = "templated"
+    rr = summary["baselines"]["oracle_ceiling"][tmpl].get("reroute_detect")
+    assert rr is not None, "reroute_detect must be populated for a reroute sweep"
+    assert rr["netbrace_detect"] == 1.0, (
+        f"oracle_ceiling NetBrace-Detect={rr['netbrace_detect']:.3f}; expected 1.0 "
+        f"(semantic grader must be wired for reroute instances)")
+    assert rr["youden_j"] == 1.0, (
+        f"oracle_ceiling Youden_J={rr['youden_j']:.3f}; expected 1.0")
+
+    # 2. empty predictor must be pinned to 0.5 / 0.0 (constant-predictor floor)
+    rr_empty = summary["baselines"]["empty"][tmpl].get("reroute_detect")
+    assert rr_empty is not None
+    assert rr_empty["netbrace_detect"] == 0.5
+    assert rr_empty["youden_j"] == 0.0
+
+    # 3. manifest grader_routing provenance is recorded
+    gr = summary["manifest"].get("grader_routing", {})
+    assert gr.get("reroute_instances") == "grade_keysets_semantic"
+    assert gr.get("all_other_instances") == "grade_keysets"
+
+    # 4. check per-row grader field in results.jsonl
+    import json
+    results_file = tmp_path / "runs" / sorted((tmp_path / "runs").iterdir())[-1].name / "results.jsonl"
+    reroute_graders, other_graders = set(), set()
+    for line in results_file.open():
+        r = json.loads(line)
+        if r.get("kind") != "model":
+            continue
+        grader = r.get("grader")
+        if run_sweep._is_reroute_instance(r.get("instance", "")):
+            reroute_graders.add(grader)
+        else:
+            other_graders.add(grader)
+    # All reroute rows must use the semantic grader
+    assert reroute_graders == {"grade_keysets_semantic"}, (
+        f"Expected all reroute rows to use grade_keysets_semantic, got {reroute_graders}")
+    # No non-reroute rows in this templated-reroutes-only run, but assert set is empty or exact
+    if other_graders:
+        assert other_graders == {"grade_keysets"}

@@ -145,6 +145,12 @@ from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
 from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
+
+def _replace_swap(params, swap):
+    """Return a copy of ``params`` with the balanced swap injected (frozen dataclass)."""
+    import dataclasses
+    return dataclasses.replace(params, swap=swap)
+
 # --------------------------------------------------------------------------- #
 # Axis value sets (the enumerable space).
 # --------------------------------------------------------------------------- #
@@ -246,23 +252,31 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
-    # Three DISTINCT community VALUES in the 16-bit:16-bit space (RFC 1997). The
-    # global-admin half is drawn per-seed; the local-admin halves are distinct fixed
-    # tags so C, D, C2 never collide. C = the matched tag, D = alt's (ignored) tag,
-    # C2 = the rewrite target (deliberately NOT in src's community-list).
+    # Three DISTINCT community VALUES in the 16-bit:16-bit space (RFC 1997), drawn from
+    # ONE shared local-admin pool (the value-bucket leak fix). C, D, C2 were previously
+    # bucketed :1xx/:2xx/:3xx; because the bypass edits C and the no_op edits D, the
+    # edited tag's value-range leaked the label to a zero-reasoning bucket probe on the
+    # changed line. Now all three are sampled WITHOUT replacement from the SAME range, so
+    # the edited tag's value carries no label info; only "did the edit strip tag C from
+    # the WAY path" (routing reasoning) separates trap from calibration. C = the matched
+    # tag (src's community-list permits only C); D = alt's ignored tag; C2 = rewrite
+    # target (deliberately NOT in src's community-list, but indistinguishable by range).
     ga = rng.randint(1, 65000)
-    comm_c = f"{ga}:{rng.randint(100, 199)}"
-    comm_d = f"{ga}:{rng.randint(200, 299)}"
-    comm_c2 = f"{ga}:{rng.randint(300, 399)}"
+    la_c, la_d, la_c2 = rng.sample(range(100, 400), 3)
+    comm_c = f"{ga}:{la_c}"
+    comm_d = f"{ga}:{la_d}"
+    comm_c2 = f"{ga}:{la_c2}"
 
-    # Per-seed ROLE->POSITION swap (the positional-leak fix): drawn LAST so every
-    # addressing/community draw above is byte-identical to before; it only decides
-    # which PHYSICAL slot the waypoint role `way` vs the bypass role `alt` occupies.
-    swap = _rp.draw_swap(rng)
-
+    # The ROLE->POSITION swap is NO LONGER drawn here. An unconstrained per-seed
+    # Bernoulli does not balance over a finite suite, and because the edited node IS the
+    # swapped (way/alt) pair the edited-node loopback octet leaked the label (FB-5,
+    # measured 16/20 at n=260). The swap is now assigned by the suite via
+    # _rp.balanced_swap(occurrence-within-label) so it is balanced WITHIN each label
+    # class. _draw_params returns swap=False; the real value is injected in
+    # _scenario_from_spec / the suite. (one-off instances get a per-seed parity below.)
     return _Params(asn=asn, loop_block=loop_block, link_block=link_block,
                    customer_net=customer_net, name=name,
-                   comm_c=comm_c, comm_d=comm_d, comm_c2=comm_c2, swap=swap)
+                   comm_c=comm_c, comm_d=comm_d, comm_c2=comm_c2, swap=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -548,8 +562,16 @@ _INTENTS_TEXT = (
 # --------------------------------------------------------------------------- #
 # Scenario assembly.
 # --------------------------------------------------------------------------- #
-def _scenario_from_spec(spec: CommunityLpSpec, seed: int) -> Scenario:
+def _scenario_from_spec(spec: CommunityLpSpec, seed: int,
+                       swap: Optional[bool] = None,
+                       occurrence: Optional[int] = None) -> Scenario:
     params = _draw_params(seed)
+    if swap is None:
+        # one-off instance: deterministic seed-parity (suite balance is injected below).
+        swap = bool(seed % 2)
+    if occurrence is None:
+        occurrence = seed  # one-off: any int; balance is a suite property
+    params = _replace_swap(params, swap)
     topo = _build_topo(spec, params)
     pre = _baseline_configs(topo)
     patch = _apply_change(topo)
@@ -601,11 +623,15 @@ def _scenario_from_spec(spec: CommunityLpSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
-    # Node-list order is randomized per seed (a fresh deterministic stream) so the
-    # change_target's INDEX in `nodes` carries no trap/no_op information either.
+    # Node-list order: the change_target is placed at a BALANCED index within its label
+    # class (the ct_index-leak fix). community_lp edits `way` on bypass and `alt` on no_op,
+    # so an independent per-seed shuffle left the change_target's node-list INDEX correlated
+    # with the label over the finite production suite (measured ct_index probe acc 0.75 at
+    # each=20). balanced_node_order places the change_target round-robin over the 4 slots
+    # within each label, so its index is identical across labels by construction.
     node_rng = random.Random(f"community_lp_nodes_{seed}")
-    nodes = [src, way, alt, dst]
-    node_rng.shuffle(nodes)
+    nodes = _rp.balanced_node_order([src, way, alt, dst], change_target,
+                                    occurrence, node_rng)
 
     return Scenario(
         name=name,
@@ -652,7 +678,7 @@ def generate_community_lp_all_combos(
 ) -> list[Scenario]:
     """One instance per structural combo (4 with no_op, 2 without), distinct seeds."""
     specs = _selected_specs(include_noop)
-    return [_scenario_from_spec(spec, seed + i) for i, spec in enumerate(specs)]
+    return _emit_balanced(specs, seed, per_position=True)
 
 
 def generate_community_lp_suite(
@@ -660,10 +686,48 @@ def generate_community_lp_suite(
 ) -> list[Scenario]:
     """Emit ``n`` DISTINCT instances with unique ids (walk the axis space, distinct
     seed per position; wrap with a fresh seed offset when ``n`` exceeds the combo
-    count, giving the same structure a NEW randomized instance)."""
+    count, giving the same structure a NEW randomized instance).
+
+    The way<->alt PHYSICAL swap is BALANCED within each label class (the FB-5 fix): the
+    k-th bypass and the k-th no_op each get ``_rp.balanced_swap(k)`` so the edited-node
+    octet/name/index is split ~50/50 within bypass AND within no_op, carrying zero label
+    information over the actual finite suite the sweep builds.
+    """
     specs = _selected_specs(include_noop)
+    chosen = [specs[i % len(specs)] for i in range(n)]
+    return _emit_balanced(chosen, base_seed, per_position=False)
+
+
+def _emit_balanced(chosen: list[CommunityLpSpec], base_seed: int,
+                   *, per_position: bool) -> list[Scenario]:
+    """Emit one Scenario per spec in ``chosen`` with a per-label BALANCED-SHUFFLE
+    (way/alt)-swap assignment (the FB-5 fix, hardened against fold-aligned parity).
+
+    For EACH label class (bypass / no_op) we assign exactly ceil(k/2) swaps to a
+    DETERMINISTICALLY-SHUFFLED subset of that label's occurrences. This (a) guarantees the
+    edited-node physical slot is split 50/50 within the label over the real suite the sweep
+    builds, and (b) decorrelates the swap from the occurrence INDEX, so no stratified
+    train/test split (which a probe could exploit) recovers the label from the edited-node
+    octet/name/index. The change_target node-list INDEX is balanced the same way via
+    _rp.balanced_node_order keyed on the per-label occurrence rank (also shuffle-decorrelated).
+    """
+    # First pass: per-label occurrence list (suite positions, in order).
+    by_label: dict[str, list[int]] = {}
+    for i, spec in enumerate(chosen):
+        by_label.setdefault(spec.effect, []).append(i)
+    # Per-label balanced-shuffle swap assignment: exactly ceil(k/2) True, shuffled.
+    swap_for: dict[int, bool] = {}
+    occ_rank: dict[int, int] = {}
+    for label, positions in by_label.items():
+        k = len(positions)
+        flags = [True] * ((k + 1) // 2) + [False] * (k - (k + 1) // 2)
+        rng = random.Random(f"community_lp_swap_{base_seed}_{label}")
+        rng.shuffle(flags)
+        for rank, (pos, fl) in enumerate(zip(positions, flags)):
+            swap_for[pos] = fl
+            occ_rank[pos] = rank
     out: list[Scenario] = []
-    for i in range(n):
-        spec = specs[i % len(specs)]
-        out.append(_scenario_from_spec(spec, base_seed + i))
+    for i, spec in enumerate(chosen):
+        out.append(_scenario_from_spec(spec, base_seed + i,
+                                       swap=swap_for[i], occurrence=occ_rank[i]))
     return out

@@ -260,39 +260,173 @@ def _pred_nonempty_over_scored(rec: dict) -> bool:
     """Does this prediction assert ANYTHING over the scored dimension types?
 
     The no_op false-alarm channel. A no_op twin's ground truth is COMPLETELY EMPTY, so
-    any tp is impossible — a non-empty prediction is purely fp. PREFERS the grader's
-    fixed ``empty_truth_false_alarm`` field (the authoritative, is_trap-independent
-    calibration-twin FP signal restored by the bug fix); falls back to re-deriving from
-    the per-type tp/fp footprint (tp+fp > 0 on any scored dim) for older records that
-    predate the field. Both read the same grader-side arithmetic.
+    any tp is impossible — a non-empty prediction is purely fp.
+
+    HARDENED (freeze blocker FB-1, 2026-06-15): this ALWAYS re-derives the answer from
+    the per-type tp/fp footprint (a prediction is non-empty over scored dims iff any
+    scored type has tp+fp > 0). It does NOT trust the grader's ``empty_truth_false_alarm``
+    field as the sole signal — that shortcut made the entire no_op FAR channel DEAD CODE
+    when a grader (the production ``baselines.grade_keysets``) forgot to populate the
+    field, so model_dump() emitted it as the schema default False forever. By reading the
+    raw arithmetic the every grader already computes, no future grader can silently kill
+    this channel by forgetting one constructor argument.
+
+    The grader's ``empty_truth_false_alarm`` field, when present, is used only as a
+    CROSS-CHECK: on a no_op (empty-truth) record it MUST agree with the per-type
+    derivation. A disagreement means the grader's field is wrong (e.g. unpopulated), so we
+    trust the per-type derivation and ignore the field. (We do not assert-crash: the
+    metric must stay robust to a buggy upstream grader, which is the whole point.)
     """
-    if "empty_truth_false_alarm" in rec:
-        return bool(rec["empty_truth_false_alarm"])
     pt = _per_type(rec)
+    derived = False
     for d in SCORED_TYPES:
         m = pt.get(d)
         if not m:
             continue
         if float(m.get("tp", 0)) + float(m.get("fp", 0)) > 0:
-            return True
-    return False
+            derived = True
+            break
+    return derived
 
 
 def _is_trap(rec: dict) -> bool:
     return bool(rec.get("is_trap", False))
 
 
+# Two-sided 95% Student-t critical values t_{0.975, df}, df = 1..30. Beyond df=30 we
+# use the normal limit 1.96. Embedded (no scipy dependency) so the metric stays
+# import-light and deterministic. Used to FLOOR the bootstrap CI so it can never render
+# a zero-width [m, m] bracket (a published zero-width CI is a reviewer kill — M-C).
+_T_CRIT_95 = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
+    15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 21: 2.080,
+    22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048,
+    29: 2.045, 30: 2.042,
+}
+
+
+def _t_crit_95(df: int) -> float:
+    """Two-sided 95% t critical value for ``df`` degrees of freedom (normal limit 1.96
+    above df=30; df<=0 falls back to the widest df=1 value)."""
+    if df <= 0:
+        return _T_CRIT_95[1]
+    return _T_CRIT_95.get(df, 1.96)
+
+
+def _t_interval(values: list[float]) -> tuple[float, float] | None:
+    """Small-sample 95% t-interval of the MEAN of ``values``: m +/- t_{0.975,n-1}*SEM,
+    SEM = sample-std / sqrt(n). Returns None if it cannot produce a POSITIVE-WIDTH
+    bracket (n<2, or all values identical => sample std 0). Sample (not population) std is
+    used so this is an honest uncertainty estimate, not the population-spread reported
+    elsewhere."""
+    n = len(values)
+    if n < 2:
+        return None
+    m = fmean(values)
+    # sample standard deviation (n-1 denominator)
+    var = sum((v - m) ** 2 for v in values) / (n - 1)
+    if var <= 0.0:
+        return None
+    sem = math.sqrt(var) / math.sqrt(n)
+    half = _t_crit_95(n - 1) * sem
+    return (m - half, m + half)
+
+
+def _instance_se_floor(
+    family_instance_means: dict[str, list[float]],
+) -> tuple[float, float] | None:
+    """An INSTANCE-LEVEL t-interval used to FLOOR the family-level CI when the family
+    means coincide (so the cluster bootstrap collapses to zero width). Pools every
+    instance mean across all families and computes a 95% t-interval around the grand mean
+    of those instance means. This exposes the within-family granularity the family-mean
+    bootstrap hides: 10 families whose means all equal 0.0 still carry, say, 100 instance
+    means whose scatter is non-degenerate. Returns None only when even the instance-level
+    values are perfectly identical (a true, honest, zero-uncertainty cell)."""
+    all_inst = [m for ims in family_instance_means.values() for m in ims]
+    return _t_interval(all_inst)
+
+
+def _cluster_bootstrap_ci(
+    family_instance_means: dict[str, list[float]],
+    *,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """95% CI of the equal-family-weight pooled mean via a TWO-LEVEL CLUSTER BOOTSTRAP.
+
+    The stage-2 unit is the FAMILY (a cluster of correlated instances), so a flat
+    percentile bootstrap over ~10 family means undercovers and renders a zero-width
+    bracket whenever those means coincide (M-C). This resamples the structure honestly:
+      level 1  resample FAMILIES with replacement (k families -> k draws);
+      level 2  within each drawn family, resample its INSTANCE MEANS with replacement;
+    the bootstrap statistic is the equal-family-weight mean of the resampled family means.
+
+    The result is then FLOORED so it NEVER renders a zero-width [m, m] bracket: we widen
+    the bracket to also contain the instance-level t-interval (``_instance_se_floor``).
+    When families coincide but instances scatter, that floor supplies honest width; when
+    even the instances are identical, the cell is genuinely zero-uncertainty and we return
+    (m, m) — which is then the ONLY honest outcome (and ``n_instances`` in the output makes
+    the degeneracy visible).
+    """
+    fams = [f for f, ims in family_instance_means.items() if ims]
+    k = len(fams)
+    if k == 0:
+        return (0.0, 0.0)
+    fam_means = {f: fmean(family_instance_means[f]) for f in fams}
+    pooled = fmean([fam_means[f] for f in fams])
+
+    boot_lo = boot_hi = pooled
+    if k >= 2:
+        rng = random.Random(seed)
+        stats: list[float] = []
+        fam_list = fams
+        for _ in range(n_boot):
+            drawn = [fam_list[rng.randrange(k)] for _ in range(k)]
+            resampled_fam_means = []
+            for f in drawn:
+                ims = family_instance_means[f]
+                ni = len(ims)
+                resampled_fam_means.append(
+                    fmean([ims[rng.randrange(ni)] for _ in range(ni)])
+                )
+            stats.append(fmean(resampled_fam_means))
+        stats.sort()
+        boot_lo = stats[int((alpha / 2) * n_boot)]
+        boot_hi = stats[min(n_boot - 1, int((1 - alpha / 2) * n_boot))]
+
+    # Floor: never render a zero-width bracket while ANY within-family scatter exists.
+    floor = _instance_se_floor(family_instance_means)
+    if floor is not None:
+        f_lo, f_hi = floor
+        lo = min(boot_lo, f_lo)
+        hi = max(boot_hi, f_hi)
+    else:
+        lo, hi = boot_lo, boot_hi
+
+    # Clamp to the metric's natural [0,1] support (these are rates / recalls).
+    lo = max(0.0, min(lo, pooled))
+    hi = min(1.0, max(hi, pooled))
+    return (lo, hi)
+
+
 def _bootstrap_ci(
     values: list[float], *, n_boot: int = 2000, alpha: float = 0.05, seed: int = 0
 ) -> tuple[float, float]:
-    """Percentile bootstrap CI of the MEAN of ``values`` (resampling the values, which
-    here are per-family statistics — the stage-2 unit). Deterministic given ``seed``.
-    Degenerate inputs (0 or 1 value, or no spread) return (mean, mean)."""
+    """Percentile bootstrap CI of the MEAN of a flat list of family-level statistics.
+
+    RETAINED for backward compatibility / direct callers. The production reroute headline
+    now routes through ``_cluster_bootstrap_ci`` (which resamples instances within
+    families and floors the width). This flat estimator FLOORS its own result by a t-
+    interval over ``values`` so it, too, never renders a zero-width bracket when n>=2 but
+    the values happen to coincide — a flat list has no instance granularity to recover, so
+    if every value is identical the only honest answer is (m, m)."""
     n = len(values)
     if n == 0:
         return (0.0, 0.0)
     m = _mean(values)
-    if n == 1 or _std(values) == 0.0:
+    if n == 1:
         return (m, m)
     rng = random.Random(seed)
     means: list[float] = []
@@ -302,6 +436,12 @@ def _bootstrap_ci(
     means.sort()
     lo = means[int((alpha / 2) * n_boot)]
     hi = means[min(n_boot - 1, int((1 - alpha / 2) * n_boot))]
+    floor = _t_interval(values)
+    if floor is not None:
+        lo = min(lo, floor[0])
+        hi = max(hi, floor[1])
+    lo = max(0.0, min(lo, m))
+    hi = min(1.0, max(hi, m))
     return (lo, hi)
 
 
@@ -314,14 +454,20 @@ def _two_stage_family_pool(
     stage 2a per-family statistic   = mean over its instance means
     stage 2b headline               = mean over the per-family statistics (POOLED across
                                        families by EQUAL family weight), +/- SEM and a
-                                       percentile bootstrap CI across families.
+                                       two-level CLUSTER bootstrap CI (resampling families,
+                                       then instances within each drawn family), FLOORED by
+                                       an instance-level t-interval so it is never zero-width
+                                       while any within-family scatter exists (M-C).
 
     Mirrors the existing scenario-level estimator's discipline (never pool raw samples
-    i.i.d.). Returns {pooled, ci_lo, ci_hi, sem, n_families, by_family:{fam:{mean,
-    n_instances}}}.
+    i.i.d.). Returns {pooled, ci_lo, ci_hi, sem, n_families, n_instances,
+    by_family:{fam:{mean, n_instances}}}. ``n_families`` AND ``n_instances`` are both
+    surfaced so a reader can see the granularity / imbalance behind every CI.
     """
     family_means: list[float] = []
+    family_instance_means: dict[str, list[float]] = {}
     by_family: dict[str, dict] = {}
+    total_instances = 0
     for fam in sorted(per_family_instance_values):
         inst_map = per_family_instance_values[fam]
         inst_means = [_mean(v) for v in inst_map.values() if v]
@@ -329,18 +475,21 @@ def _two_stage_family_pool(
             continue
         fam_mean = _mean(inst_means)
         family_means.append(fam_mean)
+        family_instance_means[fam] = inst_means
+        total_instances += len(inst_means)
         by_family[fam] = {
             "mean": round(fam_mean, 6),
             "n_instances": len(inst_means),
         }
     pooled = _mean(family_means)
-    lo, hi = _bootstrap_ci(family_means)
+    lo, hi = _cluster_bootstrap_ci(family_instance_means)
     return {
         "pooled": round(pooled, 6),
         "ci_lo": round(lo, 6),
         "ci_hi": round(hi, 6),
         "sem": round(_sem(family_means), 6),
         "n_families": len(family_means),
+        "n_instances": total_instances,
         "by_family": by_family,
     }
 
@@ -437,11 +586,13 @@ def reroute_detection_scores(
                 "pooled": trap["pooled"], "ci_lo": trap["ci_lo"],
                 "ci_hi": trap["ci_hi"], "sem": trap["sem"],
                 "n_families": trap["n_families"],
+                "n_instances": trap["n_instances"],
             },
             "no_op_far": {
                 "pooled": far["pooled"], "ci_lo": far["ci_lo"],
                 "ci_hi": far["ci_hi"], "sem": far["sem"],
                 "n_families": far["n_families"],
+                "n_instances": far["n_instances"],
             },
         },
     }

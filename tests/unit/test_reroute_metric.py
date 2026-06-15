@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from netbrace.graders.extended import grade_extended
 from netbrace.graders.semantic_sets import grade_keysets_semantic
-from netbrace.reporting.baselines import empty_keysets
+from netbrace.reporting.baselines import empty_keysets, grade_keysets
 from netbrace.reporting.sweep_aggregate import (
     REROUTE_TRUTH_DIMS,
     reroute_detection_scores,
@@ -338,3 +340,195 @@ def test_empty_truth_false_alarm_is_additive_default_false():
               "per_type": _per_type({"waypoint": (0, 1, 0)})}  # no empty_truth_false_alarm key
     out = reroute_detection_scores([legacy] * N_SAMPLES)
     assert out["no_op_far"] == 1.0  # derived the FAR from per_type fp footprint
+
+
+# =========================================================================== #
+# FB-2 (freeze blocker, 2026-06-15): the non-gameability guarantee MUST hold on the
+# PRODUCTION grader path. The original suite graded only with grade_extended and
+# grade_keysets_semantic and NEVER with reporting.baselines.grade_keysets — the grader
+# the data-collection sweep actually runs on every model AND baseline. That grade_keysets
+# forgot to set empty_truth_false_alarm, which structurally pinned the no_op FAR channel
+# to 0 and let the always-{D4,D10} attacker score netbrace_detect=1.0 / youden_j=1.0
+# (the killshot). These tests grade the SAME strategies through ALL THREE graders and
+# assert the floor, so any grader that forgets to populate the FP signal FAILS CI.
+#
+# This block MUST FAIL on the pre-fix grade_keysets and PASS on all three after FB-1.
+# =========================================================================== #
+
+# Keyset predictions for the {D4,D10} and empty strategies (the grade_keysets /
+# grade_keysets_semantic native currency).
+def _pred_keysets_d4_d10() -> dict[str, set[str]]:
+    p = empty_keysets()
+    p["waypoint"] = {_WP_KEY}
+    p["intent"] = {_INTENT_KEY}
+    return p
+
+
+def _pred_keysets_empty() -> dict[str, set[str]]:
+    return empty_keysets()
+
+
+# --- per-grader adapters: (twin_is_trap, strategy) -> a flat graded record dict ------- #
+# Each adapter grades a REAL prediction against the REAL twin ground truth through one of
+# the three production graders, then dumps it to the flat shape the metric consumes. No
+# hand-built per_type / empty_truth_false_alarm — the grader populates everything, so a
+# grader bug is exercised, not bypassed.
+def _grade_via_keysets(is_trap: bool, *, predict_d4_d10: bool) -> dict:
+    truth = _bypass_truth() if is_trap else _noop_truth()
+    pred = _pred_keysets_d4_d10() if predict_d4_d10 else _pred_keysets_empty()
+    return grade_keysets(pred, truth, is_trap=is_trap).model_dump()
+
+
+def _grade_via_semantic(is_trap: bool, *, predict_d4_d10: bool) -> dict:
+    truth = _bypass_truth() if is_trap else _noop_truth()
+    pred = _pred_keysets_d4_d10() if predict_d4_d10 else _pred_keysets_empty()
+    return grade_keysets_semantic(
+        pred, truth, config_prefixes=set(), is_trap=is_trap
+    ).model_dump()
+
+
+def _grade_via_extended(is_trap: bool, *, predict_d4_d10: bool) -> dict:
+    # grade_extended consumes ExtendedBlastRadius objects, not keysets.
+    truth = _bypass_blast(pred=True) if is_trap else ExtendedBlastRadius()
+    pred = _bypass_blast(pred=predict_d4_d10)
+    return grade_extended(pred, truth, is_trap=is_trap).model_dump()
+
+
+_GRADERS = {
+    "grade_keysets": _grade_via_keysets,            # THE PRODUCTION SWEEP GRADER
+    "grade_extended": _grade_via_extended,
+    "grade_keysets_semantic": _grade_via_semantic,
+}
+
+
+def _build_records_via_grader(grade_fn, *, predict_d4_d10: bool) -> list[dict]:
+    """A balanced bypass/no_op record set built by grading REAL predictions through a real
+    grader (one of the three production graders). ``predict_d4_d10`` toggles the constant
+    strategy: True = always-{D4,D10}, False = always-empty. Mirrors the synthetic builder's
+    shape (FAMILIES x INSTANCES_PER_FAMILY x {bypass,no_op} x N_SAMPLES) so the two-stage
+    reduction is exercised identically."""
+    recs: list[dict] = []
+    for fam in FAMILIES:
+        for idx in range(INSTANCES_PER_FAMILY):
+            for is_trap in (True, False):
+                kind = "bypass" if is_trap else "no_op"
+                inst = f"gen_{fam}_knob-{kind}_s{idx}"
+                for _ in range(N_SAMPLES):
+                    rec = grade_fn(is_trap, predict_d4_d10=predict_d4_d10)
+                    rec["instance"] = inst
+                    recs.append(rec)
+    return recs
+
+
+def _build_oracle_via_grader(grade_fn) -> list[dict]:
+    """The oracle through a real grader: predict {D4,D10} on bypass, predict empty on
+    no_op. Must score netbrace_detect=1.0 / youden_j=1.0 on every grader."""
+    recs: list[dict] = []
+    for fam in FAMILIES:
+        for idx in range(INSTANCES_PER_FAMILY):
+            for is_trap in (True, False):
+                kind = "bypass" if is_trap else "no_op"
+                inst = f"gen_{fam}_knob-{kind}_s{idx}"
+                for _ in range(N_SAMPLES):
+                    rec = grade_fn(is_trap, predict_d4_d10=is_trap)  # mimic GT
+                    rec["instance"] = inst
+                    recs.append(rec)
+    return recs
+
+
+@pytest.mark.parametrize("grader_name", list(_GRADERS))
+def test_grader_populates_empty_truth_false_alarm_on_noop(grader_name):
+    """DIRECT grader-field gate (the assertion that fails on the pre-fix grade_keysets):
+    every production grader MUST set ``empty_truth_false_alarm=True`` on an is_trap=False
+    no_op twin whose truth is empty and whose prediction is non-empty ({D4,D10}). FB-1 was
+    grade_keysets emitting the schema-default False here, killing the no_op FAR channel.
+
+    The metric was ALSO hardened to re-derive FAR from per_type (FB-1 part 2), so a
+    forgetful grader no longer breaks the headline — but the FIELD is still part of the
+    grader contract (it is the authoritative, is_trap-independent calibration-twin FP
+    signal other code may read), so a grader that forgets it must FAIL CI HERE. This
+    assertion is the one that is RED on the pre-fix grade_keysets and GREEN after FB-1, on
+    all three graders."""
+    grade_fn = _GRADERS[grader_name]
+    rec = grade_fn(False, predict_d4_d10=True)  # no_op twin, model predicts {D4,D10}
+    assert rec["empty_truth_false_alarm"] is True, (grader_name, rec)
+    # and when the no_op prediction is empty, the field must be False (no false alarm)
+    rec_silent = grade_fn(False, predict_d4_d10=False)
+    assert rec_silent["empty_truth_false_alarm"] is False, (grader_name, rec_silent)
+    # legacy is_trap-gated false_alarm stays dead on the no_op twin (proves the new
+    # channel is what restores the signal, not the old one)
+    assert rec["false_alarm"] is False, (grader_name, rec)
+
+
+@pytest.mark.parametrize("grader_name", list(_GRADERS))
+def test_always_d4_d10_pinned_to_half_through_production_graders(grader_name):
+    """KILLSHOT GATE: the always-{D4,D10} attacker graded through EACH production grader
+    must land at netbrace_detect=0.50 / youden_j=0.0 / no_op_far=1.0. FB-1 is precisely
+    that grade_keysets used to score this 1.0/1.0/0.0 — this assertion FAILS on the
+    pre-fix grade_keysets and PASSES after the fix, on all three graders."""
+    grade_fn = _GRADERS[grader_name]
+    out = reroute_detection_scores(
+        _build_records_via_grader(grade_fn, predict_d4_d10=True)
+    )
+    assert out["trap_recall"] == 1.0, (grader_name, out)
+    assert out["no_op_far"] == 1.0, (grader_name, out)
+    assert out["netbrace_detect"] == 0.5, (grader_name, out)
+    assert out["youden_j"] == 0.0, (grader_name, out)
+
+
+@pytest.mark.parametrize("grader_name", list(_GRADERS))
+def test_always_empty_pinned_to_half_through_production_graders(grader_name):
+    """The opposite constant predictor (always-empty) graded through each production grader
+    must ALSO sit at 0.50 / 0.0 — proving the floor is label-independent on the real path."""
+    grade_fn = _GRADERS[grader_name]
+    out = reroute_detection_scores(
+        _build_records_via_grader(grade_fn, predict_d4_d10=False)
+    )
+    assert out["trap_recall"] == 0.0, (grader_name, out)
+    assert out["no_op_far"] == 0.0, (grader_name, out)
+    assert out["netbrace_detect"] == 0.5, (grader_name, out)
+    assert out["youden_j"] == 0.0, (grader_name, out)
+
+
+@pytest.mark.parametrize("grader_name", list(_GRADERS))
+def test_oracle_scores_one_through_production_graders(grader_name):
+    """The oracle graded through each production grader scores netbrace_detect=1.0 /
+    youden_j=1.0 — the ceiling is preserved by the FB-1 fix on every grader."""
+    grade_fn = _GRADERS[grader_name]
+    out = reroute_detection_scores(_build_oracle_via_grader(grade_fn))
+    assert out["trap_recall"] == 1.0, (grader_name, out)
+    assert out["no_op_far"] == 0.0, (grader_name, out)
+    assert out["netbrace_detect"] == 1.0, (grader_name, out)
+    assert out["youden_j"] == 1.0, (grader_name, out)
+
+
+# =========================================================================== #
+# M-C (major): honest confidence intervals — never a zero-width bracket while any
+# within-family scatter exists; n_families AND n_instances surfaced per cell.
+# =========================================================================== #
+def test_ci_never_zero_width_when_instances_scatter():
+    """A cell whose FAMILY means coincide but whose INSTANCES scatter must NOT report a
+    zero-width CI (the dishonest [m,m] bracket M-C flags). The cluster bootstrap + the
+    instance-level t-floor must supply honest width."""
+    # build a partial reasoner whose per-family means coincide but instances scatter:
+    # within each family, instance 0 fires (recall-where-truth 0.5), instance 1 silent (0.0)
+    # -> every family mean = 0.25, but the underlying instance means {0.5, 0.0} scatter.
+    recs = _build_records(lambda is_trap, idx: _counts_partial(is_trap, fire=(idx == 0)))
+    out = reroute_detection_scores(recs)
+    det = out["detail"]["trap_recall"]
+    assert det["ci_hi"] > det["ci_lo"], det  # NOT zero-width
+    assert det["n_families"] == len(FAMILIES)
+    assert det["n_instances"] == len(FAMILIES) * INSTANCES_PER_FAMILY
+    # FAR cell likewise exposes both granularities
+    far = out["detail"]["no_op_far"]
+    assert "n_instances" in far and "n_families" in far
+
+
+def test_ci_honest_zero_only_when_truly_identical():
+    """When every instance value is genuinely identical (the oracle: every bypass instance
+    recall=1.0), a zero-width CI is the ONLY honest answer — the floor must not fabricate
+    spurious width out of perfectly determinate data."""
+    out = reroute_detection_scores(_build_records(lambda is_trap, idx: _counts_perfect(is_trap)))
+    det = out["detail"]["trap_recall"]
+    assert det["ci_lo"] == det["ci_hi"] == 1.0  # honest zero width
+    assert det["n_instances"] == len(FAMILIES) * INSTANCES_PER_FAMILY

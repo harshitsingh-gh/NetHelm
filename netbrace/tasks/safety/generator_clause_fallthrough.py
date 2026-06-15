@@ -200,8 +200,8 @@ class _Params:
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
     rm_name: str             # the shared inbound route-map name
-    asl_way: str             # the way-path as-path access-list name
-    asl_sentinel: str        # the decoy as-path access-list name
+    asl_way: str             # the LIVE (way-path) as-path access-list name (role-neutral)
+    asl_sentinel: str        # the DECOY (sentinel) as-path access-list name (role-neutral)
     live_seq: int            # per-seed route-map seq of the LIVE (way) clause (leak fix)
     decoy_seq: int           # per-seed route-map seq of the inert decoy clause (leak fix)
 
@@ -231,8 +231,15 @@ def _draw_params(seed: int) -> _Params:
     # route-map / as-path-list identifiers differ per seed).
     tag = rng.randint(1000, 9999)
     rm_name = f"RM_UPLINK_IN_{tag}"
-    asl_way = f"AS_WAY_{tag}"
-    asl_sentinel = f"AS_SENT_{tag}"
+    # ROLE-NEUTRAL pooled access-list names (FB-3 fix). Two distinct per-seed tags from a
+    # shared name family AS_LIST_<t>; which tag the LIVE (way) clause vs the inert DECOY
+    # clause uses is decided by a per-seed coin flip, so the edited clause's referenced
+    # list name carries NO bypass/no_op label info (it was AS_WAY vs AS_SENT before).
+    t1, t2 = rng.sample(range(1000, 9999), 2)
+    if rng.random() < 0.5:
+        asl_way, asl_sentinel = f"AS_LIST_{t1}", f"AS_LIST_{t2}"
+    else:
+        asl_way, asl_sentinel = f"AS_LIST_{t2}", f"AS_LIST_{t1}"
 
     # Per-seed clause-seq assignment (positional-leak fix). The LIVE (way) clause and
     # the inert DECOY clause take two DISTINCT seqs, both strictly below the catch-all

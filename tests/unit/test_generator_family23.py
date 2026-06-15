@@ -200,22 +200,28 @@ def test_origin_code_both_twins_name_customer_prefix():
                         or "redistribute connected" in l) for l in pm), spec.dims_label()
 
 
-def test_origin_code_noop_carries_set_origin_neutralizer():
-    """The no_op must carry an explicit `set origin` pin (igp on the way knob, incomplete on
-    the alt knob) — the load-bearing best-path-NEUTRAL clause that distinguishes it from the
-    bypass by routing reasoning rather than by which prefix is touched. The bypass must NOT
-    carry a `set origin` clause (the ORIGIN is left to flip)."""
+def test_origin_code_both_twins_carry_set_origin_value_distinguishes():
+    """HELD-OUT-FIX (set-origin keyword leak): BOTH twins now carry an explicit `set origin`
+    clause, so a grep-for-`set origin` probe can no longer separate trap from calibration
+    (it was bal-acc 1.0 before: only the no_op pinned origin). The discriminator is the
+    origin VALUE relative to the PRE origin (way PRE=igp, alt PRE=incomplete):
+      * bypass pins the OPPOSITE of PRE (flip -> ORIGIN tie collapses -> latent MED decides);
+      * no_op  pins the SAME as PRE (hold -> best path unchanged -> empty GT).
+    Telling them apart requires reading the PRE origination method (routing reasoning), not a
+    keyword grep."""
     mod = generator_origin_code
     for spec in mod.enumerate_specs():
         scn = mod.generate_origin_code_instance(600, spec=spec)
         added = [l[1:] for l in _diff_pm_lines(scn) if l.startswith("+")]
         has_set_origin = any("set origin" in l for l in added)
-        if spec.effect == "no_op":
-            assert has_set_origin, (spec.dims_label(), "no_op missing set-origin neutralizer")
-            want = "igp" if spec.knob == "way_to_incomplete" else "incomplete"
-            assert any(f"set origin {want}" in l for l in added), spec.dims_label()
-        else:  # bypass leaves ORIGIN free to flip
-            assert not has_set_origin, (spec.dims_label(), "bypass should not pin origin")
+        assert has_set_origin, (spec.dims_label(), "both twins must carry set origin")
+        pre = "igp" if spec.knob == "way_to_incomplete" else "incomplete"
+        flip = "incomplete" if pre == "igp" else "igp"
+        want = flip if spec.effect == "bypass" else pre   # bypass flips, no_op holds
+        assert any(f"set origin {want}" in l for l in added), (spec.dims_label(), want)
+        # and the WRONG value must NOT appear (so the value is unambiguous)
+        wrong = pre if spec.effect == "bypass" else flip
+        assert not any(f"set origin {wrong}" in l for l in added), (spec.dims_label(), wrong)
 
 
 def test_origin_code_bypass_relocates_med_not_removed():

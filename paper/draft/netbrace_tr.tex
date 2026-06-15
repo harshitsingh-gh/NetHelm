@@ -645,10 +645,16 @@ and the open-weight DeepSeek v4-pro on 20 of 30 (0.56)---and even these reads
 are mostly of the waypoint \emph{element}; the paired traffic-pinning
 \emph{intent} key is missed far more often (credited on 19/30 of GPT-5.5's
 and 7/30 of DeepSeek's samples), so no model reliably reports the full
-reroute. Reading the silent reroute is, on this mechanism, \emph{orthogonal}
-to loud-half skill (Spearman $\rho{=}0.22$ between grounded macro and reroute
-waypoint F1 across the eight models, not significant; Opus and Gemini top the
-loud half yet miss the reroute) and not vendor-bound: a proprietary model
+reroute. Reading the silent reroute \emph{dissociates} from loud-half skill on
+this mechanism: the loud-half leaders Opus 4.8 and Gemini 3.5 Flash top the
+grounded macro yet miss the reroute, while the reroute is read by one mid-pack
+proprietary model (GPT-5.5) and one open-weight model (DeepSeek). The rank
+correlation across the eight models is weak and positive (Spearman
+$\rho{=}0.22$, grounded macro vs.\ reroute waypoint F1) but $n{=}8$ is
+underpowered---the test cannot detect even a strong correlation (critical
+$|\rho|{=}0.71$ for $p{<}.05$; the 95\% CI on $\rho$ spans
+$[{-}0.57,{+}0.80]$)---so we do \emph{not} claim independence, only the
+example-wise dissociation above. The split is also not vendor-bound: a proprietary model
 (GPT-5.5) and an open-weight one (DeepSeek) clear the field together (F4).
 Whether this is a single ``quiet-half'' capability axis or a property of this
 one leak-reroute mechanism is the central open question
@@ -885,6 +891,22 @@ reporting. The granularity pitfall of \S\ref{sec:graderfinding} is offered
 as a concrete addition to that agenda. The holistic multi-metric framing
 descends from HELM~\cite{helm}.
 
+\paragraph{NetBrace-Detect and prior metric art.} \netbrace{}-Detect
+$= (\textit{trap\_recall} + (1 - \textit{no\_op\_FAR}))/2$ is balanced
+accuracy; the equivalent Youden's~J formulation is
+$J = \textit{trap\_recall} - \textit{no\_op\_FAR}$. The use of Miss Rate
+/ False Alarm Rate over paired misbehavior-vs-benign instances for LLM
+monitor reliability evaluation has been formalised in
+AutoMonitor-Bench~\cite{automonitorbench}, and the equivalence of balanced
+accuracy and Youden's~J for LLM judge selection is established
+in~\cite{balancedaccyouden}. Our novelty is not the balanced-accuracy form
+itself, but the \emph{domain boundary}: a typed, oracle-computed network
+blast-radius set $\{D4, D10\}$ grounded in a pinned Batfish snapshot, with
+diff-shape-identical no-op calibration twins that prevent surface-token
+probes from gaming the metric---a structure that is specific to
+pre-deployment configuration review and not replicated by generic monitor
+or judge evaluation frameworks.
+
 \section{Limitations}
 \label{sec:limitations}
 
@@ -1112,6 +1134,18 @@ arXiv:2211.09110.
 A.~Pilosov and T.~Kapela.
 \newblock Stealing the {Internet}: An {Internet}-scale man-in-the-middle attack.
 \newblock In \emph{DEFCON~16}, 2008.
+
+\bibitem{automonitorbench}
+Y.~Li et al.
+\newblock {AutoMonitor-Bench}: Evaluating the reliability of {LLM}-based
+misbehavior monitors.
+\newblock In \emph{Proc.\ ACL Findings}, 2026. arXiv:2601.05752.
+
+\bibitem{balancedaccyouden}
+S.~Collot, C.~Fraser, J.~Zhao, W.~F.~Shen, T.~Willi, and I.~Leontiadis.
+\newblock Balanced accuracy: The right metric for evaluating {LLM} judges ---
+explained through {Youden's}~{J} statistic.
+\newblock arXiv:2512.08121, 2025.
 
 \end{thebibliography}
 
