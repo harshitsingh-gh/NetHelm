@@ -106,6 +106,50 @@ next-hop change (D7) directly — these are deterministic on a single snapshot p
 3. Attribute/topology changes that flip RR best-path are blast-radius events even
    though nothing drops.
 
+## The PURE-QUIET (count-preserved) variant — D4+D10 only, no D5
+The file above describes the *loud* form (D5 redundancy collapse N→1 at clients). There
+is a strictly subtler sibling that is **pure waypoint/intent violation with reachability
+intact and NO redundancy drop**, used by the NetBrace `rr-bestpath-reflect-flip`
+mechanism. Hold the reflected-path count at **1→1** (classic RR, add-path OFF,
+maximum-paths=1) so D5 is structurally empty in both snapshots, and flip *which* single
+egress the RR reflects:
+
+- PRE: the RR's single best path is via the **waypoint** egress (way). Because the RR
+  reflects exactly one path (RFC 4456 §11), the client (src) sees ONLY way and installs
+  it; src→dst transits the mandated node.
+- DIFF: an **upstream IGP-cost change** (headline: `ip ospf cost` on the rr→way link) or
+  an RR-local LP relax flips the RR's IGP-metric tiebreak (RFC 4271 §9.1.2.2). The RR now
+  computes the **bypass** egress (alt) as its single best and reflects alt to src.
+- POST: src installs alt and silently stops transiting the waypoint. **All sessions
+  ESTABLISHED (D1=∅); prefix still BEST/present at RR and src, only Originator_Id flips
+  way→alt (D2=∅); alt is a real egress so dst stays reachable (D3=∅, D7=∅); installed
+  next-hop count is 1→1 so NO redundancy drop (D5=∅).** Only D4 (waypoint) + D10 (intent)
+  fire. This is the quiet half.
+
+**Why this is operationally real, not a toy:**
+- The *cause* is the peer-reviewed hot-potato phenomenon: an intradomain IGP event flips
+  which egress a router selects via the BGP IGP-metric tiebreak, while destinations stay
+  reachable — measured on AT&T's backbone, with BGP lagging the IGP event 60 s+.
+  [Teixeira, Shaikh, Griffin, Voelker — "Dynamics of hot-potato routing in IP networks",
+  ACM SIGMETRICS 2004](https://dl.acm.org/doi/10.1145/1005686.1005723);
+  [Teixeira, Shaikh, Griffin, Voelker — "Network Sensitivity to Hot-Potato Disruptions",
+  ACM SIGCOMM 2004](https://dblp.org/rec/conf/sigcomm/TeixeiraSGV04.html).
+- The *RR-vantage* layer (RR picks best from its own IGP position and reflects only that
+  one path) is the documented motivation for ORR (RFC 9107) and add-path (RFC 7911):
+  [ipSpace — BGP Optimal Route Reflection 101](https://blog.ipspace.net/2021/10/bgp-optimal-route-reflection/).
+- The *damage* is the universally-taught design hazard "asymmetric / shifted routing
+  bypasses the stateful inspection box": a firewall/scrubber/DPI/LI tap must see the flow
+  or it is useless. Forcing symmetric, on-path transit is core BGP design discipline —
+  [O'Reilly, *Practical BGP* — "Forcing Symmetric Entry and Exit Points"](https://www.oreilly.com/library/view/practical-bgp/0321127005/0321127005_ch02lev1sec6.html);
+  [Noction — BGP and asymmetric routing](https://www.noction.com/blog/bgp-and-asymmetric-routing).
+- No single *named public postmortem* says "an IGP cost change made traffic stop
+  transiting our firewall." That is expected and is itself the quiet-half thesis: this
+  produces **no customer-visible outage** (traffic still arrives), so it does not get a
+  postmortem; and when it bypasses a security/LI control, that incident is exactly the
+  class operators do not publish. Confidence: mechanism = **documented** (Teixeira +
+  RFCs + design literature); the specific waypoint-bypass instance = **analogous/
+  war-story**.
+
 ## References
 - [RFC 4456 — BGP Route Reflection (§11)](https://www.rfc-editor.org/rfc/rfc4456.html)
 - [RFC 4271 — BGP-4 (§9.1 decision process)](https://www.rfc-editor.org/rfc/rfc4271.html)

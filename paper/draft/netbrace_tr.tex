@@ -38,33 +38,40 @@ scored by deterministic, semantics-aware set comparison---no LLM judge. We
 evaluate eight models from five vendors---six proprietary and two
 open-weight reasoning models---on \netbrace{}, a benchmark of 11
 incident-grounded scenarios and 48 generator-produced instances with
-randomized identifiers: 1{,}100 graded samples ($N{=}5$ per instance). The
+randomized identifiers: 1{,}100 graded samples ($N{=}5$ per instance; all
+eight models on the grounded scenarios and a six-instance reroute probe, two
+on the full 48-instance templated split). The
 measured capability split is sharp and runs along an operationally
 meaningful line. Models read the \emph{loud} half of the blast radius well:
 five of the eight identify both grounded blackholes---the explicit
 leak-discard and the second-order partial-ECMP one---in every sample (10/10),
 a sixth (Sonnet 4.6) at F1 0.97, and they read first-order prefix loss at F1
-0.67--0.83. The \emph{quiet} half---damage that removes no nameable object and
-leaves reachability intact---\emph{separates the fleet}: a leak-induced silent
-reroute that pushes a victim's traffic off its mandated waypoint, while every
-route still resolves and every session stays up, is missed outright by most
-models---scoring zero on both the waypoint and intent dimensions on a
+0.67--0.83. On its sharpest case---a \emph{single} leak-reroute mechanism
+(six seed/scope variants)---the \emph{quiet} half (damage that removes no
+nameable object and leaves reachability intact) \emph{separates the fleet}: a
+more-specific route leak silently diverts a victim's traffic onto an
+impostor's path instead of through the victim's own AS, while every route
+still resolves and every session stays up, and six of the eight models miss
+it outright---scoring zero on both the waypoint and intent dimensions on a
 majority of samples, including the loud-half leaders Opus 4.8 (21 of 30) and
-Gemini 3.5 Flash (all 30). Only two clear it: GPT-5.5 (misses both on 1 of
-30; waypoint F1 0.64) and the open-weight DeepSeek v4-pro (10 of 30; 0.56),
-statistically tied at the top and well above the rest. An open-weight reasoner
-standing among the two leaders---ahead of every Anthropic and Google model
-evaluated---indicates the gap is a reasoning trait, not a closed-model or
-grader-circularity artifact; the differentiation is itself grader-dependent
-(under naive exact-string matching every model misses all 30, the same
-granularity artifact we report for forwarding anomalies). The damage models
-\emph{do} catch shares a
+Gemini 3.5 Flash (all 30). Only two clear it: GPT-5.5 (1 of 30; waypoint F1
+0.64) and the open-weight DeepSeek v4-pro (10 of 30; 0.56), statistically
+tied at the top and well above the rest---an open-weight reasoner among the
+leaders, which rules out a closed-model or Claude-family grader artifact.
+Two caveats bound this finding: the split exists only under our semantic
+grader (under exact-string matching every model misses all 30, the same
+granularity artifact we report for forwarding anomalies), and it rests on one
+mechanism---so whether ``the quiet half'' is a single capability axis or a
+one-mechanism coincidence is the open question this benchmark is built to
+answer. The damage models \emph{do} catch shares a
 signature: it removes or blackholes something they can name---a withdrawn
-route, a vanished management prefix, a blackholed destination, which the
+route, a vanished management prefix, a blackholed destination---which the
 stronger models catch at F1 1.00 where each is the ground truth (the two
-cheapest lower, 0.00--0.80, with GPT-5.4-mini missing the lockout entirely).
-No model ever raises a false session-loss alarm (0/1{,}100). The most expensive real outages of the last decade---leak-induced
-silent reroutes among them---live in the quiet half. We additionally show
+cheapest lower, 0.00--0.80, GPT-5.4-mini missing the lockout entirely).
+No model ever raises a false session-loss alarm (0/1{,}100). We model the
+reachability-preserving \emph{kernel} of these leak-induced reroutes---the
+path/policy violation in isolation from the congestion or loss the real
+incidents also produce. We additionally show
 that naive exact-string set grading would have reported a uniform 0.00 on
 forwarding anomalies for every model---a granularity artifact, not a
 capability fact---and release both graders with a frozen semantic-matching
@@ -93,16 +100,21 @@ a reviewer is expected to articulate its \emph{blast radius}: which BGP
 sessions will drop, which prefixes will disappear from which routing tables,
 which flows will lose their path, which traffic will silently blackhole, and
 which device will exhaust its FIB. The damage is \emph{typed} and
-\emph{itemized}, and the most expensive failures in operational history are
+\emph{itemizable}---a reviewer reasons about which specific sessions,
+prefixes, and paths a change touches, whether or not anyone writes it down as
+a list---and the most expensive failures in operational history are
 \emph{quiet}: the configuration change looks innocuous, every BGP session
 stays established, often every destination even stays reachable---and the
 damage emerges only from the interaction of routing policy with topology. A
-leaked more-specific route attracts traffic onto a path that cannot deliver
-it---congesting it, as in the 2019 route-leak incidents, or discarding it
-outright, as we model here for determinism. A ``cleanup'' filter's implicit
-deny silently withdraws a customer prefix while the session stays up. A
-LOCAL\_PREF adjustment quietly steers traffic around the inspection node it
-is required to transit.
+leaked more-specific route attracts a victim's traffic onto an impostor's path
+that still \emph{delivers} it while bypassing the victim's own AS---the
+sub-prefix-hijack reroute, demonstrated as a routing primitive since Pilosov
+and Kapela~\cite{pilosov} and observed in production as recently as a 2025
+sub-prefix hijack---or, in a \emph{louder} variant, onto a path that drops it
+(the 2019 Cloudflare/Verizon leak, which we model as a deterministic discard).
+A ``cleanup'' filter's implicit deny silently withdraws a customer prefix
+while the session stays up. A LOCAL\_PREF adjustment quietly steers traffic
+around the inspection node it is required to transit.
 
 This paper asks whether LLMs can see that damage \emph{before} a change is
 applied, from the same evidence a human reviewer has: the device
@@ -149,11 +161,12 @@ prefix, a dropped ECMP path---is caught at F1 1.00 (stronger models;
 0.00--0.80 for the cheapest, mini missing the lockout) where it is the ground
 truth. Quiet
 damage---where reachability survives and nothing the diff directly changes
-looks broken---\emph{separates the fleet}: traffic rerouted past a mandated
-waypoint by a leak \emph{elsewhere}, with every route still resolving, is
-missed by most models (Opus 4.8 scores zero on both the waypoint and intent
-dimensions on 21/30 and Gemini 3.5 Flash on all 30---both despite F1 1.00 on
-the loud half) and cleared only by two models (GPT-5.5 misses
+looks broken---\emph{separates the fleet} on a single leak-reroute mechanism:
+a leak \emph{elsewhere} diverts a victim's traffic onto an impostor's path
+(violating the origin-transit waypoint) with every route still resolving, and
+six of the eight models miss it (Opus 4.8 scores zero on both the waypoint and
+intent dimensions on 21/30 and Gemini 3.5 Flash on all 30---both despite F1
+1.00 on the loud half) while only two clear it (GPT-5.5 misses
 1/30, the open-weight DeepSeek v4-pro 10/30)---as is the traffic-pinning
 intent a surviving covering aggregate hides even as the pinned specifics are
 dropped (\S\ref{sec:results}). The split is not first- vs.\ second-order
@@ -202,8 +215,10 @@ report is over those nine:
   \item \textbf{D2 prefixes}: watched prefixes present in a device's main
         RIB before, absent after.
   \item \textbf{D3 reachability}: flows delivered before, undeliverable after.
-  \item \textbf{D4 waypoints}: flows that must transit a waypoint (\eg an
-        inspection node) and no longer do.
+  \item \textbf{D4 waypoints}: flows that must transit a mandated node (\eg an
+        inspection/scrubbing node, or---for the origin-transit/anti-hijack
+        invariant---a victim AS's own infrastructure for its traffic) and no
+        longer do.
   \item \textbf{D5 redundancy}: (node, prefix) pairs whose installed
         equal-cost path count drops.
   \item \textbf{D6 packet filters}: permit$\leftrightarrow$deny transitions
@@ -261,9 +276,11 @@ positive), and a narrower prediction earns credit only if it covers the
 probed host---which requires correctly reasoning about \emph{which} traffic
 the change harms. For forwarding anomalies, \texttt{blackhole} and
 \texttt{null\_routed} form one equivalence class (the contract's own gloss
-conflates them); \texttt{loop} stays distinct. The canonicalization is
-provably the identity on dimensions whose truth is already config-visible
-(D1, D2, D8, D9), and it leaves every model-free floor at chance: the
+conflates them); \texttt{loop} stays distinct. The canonicalization is the
+identity on dimensions whose truth is already config-visible (D1, D2, D8, D9)
+whenever every such truth key is literally rendered in the prompt, which we
+verify by audit holds for all 59 benchmark instances---and it leaves every
+model-free floor at chance: the
 largest floor movement under it is the syntactic-diff floor's
 0.007$\to$0.023 (templated), with all floors remaining $\leq$0.02 grounded
 and $\leq$0.08 templated (\S\ref{sec:floors}).
@@ -392,9 +409,9 @@ GPT-5.4-mini run with reasoning enabled and accept no sampling parameters;
 Opus 4.8 has removed them; all are sent no temperature except Haiku 4.5 and
 Sonnet 4.6 (temperature 0.7) and Gemini 3.5 Flash (API default). DeepSeek and
 Kimi are reasoning models whose hidden chain-of-thought is streamed and
-discarded; the open-weight pair is run with streaming and a generous
-output-token budget (up to 128k, Moonshot's documented reasoning-benchmark
-recommendation) so a long chain-of-thought is never truncated before the final
+discarded; the open-weight pair is run with streaming and a 128k output
+ceiling (well above Moonshot's 98{,}304-token reasoning-benchmark generation
+length) so a long chain-of-thought is never truncated before the final
 answer---which is short in practice (under 1k tokens)---and both returned zero
 invalid grounded samples.
 Gemini 3.5 Flash is Google's fast tier (the 3.5
@@ -468,7 +485,13 @@ re-ran its grounded split with streaming at the open-weight token budget,
 yielding the zero-invalid set we report. Gemini's reroute set is likewise a
 clean re-run (an earlier partial had two API-error invalids); both re-runs use
 the identical frozen prompt and pinned model ID, and Gemini scores 0.00 on the
-reroute either way.
+reroute either way. (v) The reroute scenario realizes ``the impostor delivers
+the victim's traffic'' by having the leaker host the probed address on a
+connected interface---the most conservative realization, which makes
+reachability (D3) and forwarding (D7) \emph{provably} empty so the modeled
+damage is purely the path/policy violation; a true onward-forwarding
+man-in-the-middle or server impersonation needs multi-hop data-plane state
+Batfish's steady-state model does not carry, and is future work.
 
 \section{Results}
 \label{sec:results}
@@ -546,7 +569,13 @@ silent reroute, is missed (F3) and is not plotted here.}
 open-weight pair brackets the mid-tier (Kimi 0.49 tying the top of the fleet,
 DeepSeek v4-pro 0.44 above both Sonnet 4.6 and Haiku 4.5), and GPT-5.4-mini
 trails at 0.27; all model-free floors score $\leq$0.02 on that split
-(Table~\ref{tab:grounded}). On the templated split's damage instances,
+(Table~\ref{tab:grounded}). The grounded macro is, however, a \emph{weak}
+discriminator \emph{among} models: six of the eight sit within a 0.12 band
+($\approx$2 standard errors, F4), so it cleanly separates the floors from the
+models (the benchmark is not template recall) but barely separates the
+frontier models from each other---the sharp model-vs-model separation is the
+silent reroute (F3), not the grounded average. On the templated split's
+damage instances,
 Haiku 4.5 and GPT-5.4-mini score 0.30$\pm$0.18 and 0.21$\pm$0.20 while the
 modal-by-class memorizer scores \textbf{0.00} and the best other floor
 0.075 (Figure~\ref{fig:floors}): the task is neither impossible nor
@@ -580,8 +609,10 @@ consequences. The data draw the line elsewhere. The \emph{loud} half is
 read well across the fleet: five of the eight models---the four leaders plus
 the open-weight DeepSeek v4-pro---identify both grounded blackholes on
 every sample (10/10 each on \emph{leak\_ms} and \emph{clos\_summary}---the
-latter a genuinely second-order, partial-ECMP consequence of a
-summarization change), Sonnet 4.6 nearly matches them (D7 0.97), and
+latter a genuinely second-order, partial-ECMP consequence of a summarization
+change, though it is a single instance, so the ``models read second-order
+damage'' reading rests on one Clos topology), Sonnet 4.6 nearly matches them
+(D7 0.97), and
 prefix-loss (D2) F1 is 0.67--0.83 across that group;
 even the two cheapest models catch the explicit leak blackhole (Haiku 1.00
 grounded, 0.98 on the templated leak-blackhole class), though they alone
@@ -600,8 +631,10 @@ reading: reachability holds, and the harm is a path or policy the diff
 never spells out. Its sharpest case is the leak-induced silent reroute, and
 it \emph{separates the fleet} (Table~\ref{tab:reroute}). On the six reroute
 instances---where a more-specific leak \emph{elsewhere} pulls a victim's
-traffic past its mandated waypoint while the route still resolves and every
-destination stays reachable---six of the eight score zero on \emph{both} the
+traffic onto an impostor's path, violating the origin-transit waypoint (the
+victim's traffic must transit the victim's own AS) while the route still
+resolves and every destination stays reachable---six of the eight score zero
+on \emph{both} the
 waypoint and intent dimensions on the majority of samples: GPT-5.4-mini and
 Gemini 3.5 Flash on all 30, Haiku 4.5 on 27/30, Opus 4.8 on 21/30, Sonnet
 4.6 on 18/30, and Kimi k2.6 on 17/30---several \emph{despite} topping the
@@ -612,10 +645,20 @@ and the open-weight DeepSeek v4-pro on 20 of 30 (0.56)---and even these reads
 are mostly of the waypoint \emph{element}; the paired traffic-pinning
 \emph{intent} key is missed far more often (credited on 19/30 of GPT-5.5's
 and 7/30 of DeepSeek's samples), so no model reliably reports the full
-reroute. Reading the silent reroute is nonetheless a distinct capability
-axis---uncorrelated with loud-half skill (Opus and Gemini top the loud half
-yet miss the reroute) and not vendor-bound: a proprietary model (GPT-5.5)
-and an open-weight one (DeepSeek) clear the field together (F4). This
+reroute. Reading the silent reroute is, on this mechanism, \emph{orthogonal}
+to loud-half skill (Spearman $\rho{=}0.22$ between grounded macro and reroute
+waypoint F1 across the eight models, not significant; Opus and Gemini top the
+loud half yet miss the reroute) and not vendor-bound: a proprietary model
+(GPT-5.5) and an open-weight one (DeepSeek) clear the field together (F4).
+Whether this is a single ``quiet-half'' capability axis or a property of this
+one leak-reroute mechanism is the central open question
+(\S\ref{sec:limitations}); we claim a sharp, reproducible split on
+\emph{this} mechanism, not a general axis. In the interest of transparency we
+note the interpretation tightened as evidence arrived: on the first five
+(proprietary) models the split appeared vendor-bound; adding the two
+open-weight models revised it to the model-specific reading above (one open
+model reads the reroute, the other misses it), which the data now support
+directly. This
 differentiation is grader-dependent: under naive exact-string matching,
 \emph{every} model scores both-zero on all 30 (the same probe-granularity
 artifact as D7, \S\ref{sec:graderfinding}); the semantic grader's
@@ -635,9 +678,11 @@ over-prediction the paper discloses for the D3/D7 boundary (F2). The genuine
 miss is narrow and consistent: damage is read when it deletes or blackholes
 something nameable, and missed---by most of the fleet---when every object
 survives and only the path silently shifts. This is the path/policy-violation
-kernel of the more-specific-leak class (the 2019 Cloudflare/Verizon leak among
-them), which we model deterministically, isolated from the congestion and loss
-the real incidents also produced (\S\ref{sec:task}). We measure the split on
+kernel of the more-specific-leak class---the deliver-but-bypass sub-prefix
+hijack~\cite{pilosov}, distinct from the louder 2019-style discard variant
+whose loss a competent model catches---which we model deterministically,
+isolated from the congestion and loss the real incidents also produce
+(\S\ref{sec:task}). We measure the split on
 six seed-and-scope variants of a \emph{single} leak-reroute mechanism; whether
 it generalizes across structurally distinct quiet-reroute mechanisms---LOCAL\_PREF
 steering, AS-path manipulation, aggregate masking---is the central open
@@ -708,8 +753,9 @@ forwarding-anomaly-truth sample earns credit), and the
 grounded frontier macro drops from 0.48--0.51 to 0.36--0.37
 (Appendix~\ref{app:exact})---while the raw outputs contain the correct
 node, kind, and config-visible prefix. The semantic canonicalization that
-corrects this is provably the identity on the config-visible dimensions
-(D1, D2, D8, D9) and leaves every model-free floor at chance (largest
+corrects this is the identity on the config-visible dimensions
+(D1, D2, D8, D9)---verified by audit, since every config-visible truth key is
+literally rendered---and leaves every model-free floor at chance (largest
 movement: the syntactic-diff floor, 0.007$\to$0.023 templated), so the
 correction lifts models, not floors---and only on the dimensions where the
 raw outputs were right all along. We report this as a methods finding in its own
@@ -740,9 +786,13 @@ cannot surface this: under a pass/fail rubric, a model that predicts
 flags the waypoint bypass, because both made \emph{a} prediction. Typed,
 graded affected-set scoring is what makes the quiet half measurable---and
 the quiet half is where the most insidious incidents live: a leak that
-reroutes a victim's traffic onto a path it should never take, with every
-session up and every destination still reachable, exactly as in the 2019
-route-leak outages.
+reroutes a victim's traffic onto a path it should never take while every
+session stays up and every destination stays reachable---the
+deliver-but-bypass sub-prefix hijack (a demonstrated routing
+primitive~\cite{pilosov}, observed in production as recently as 2025), whose
+harm leaves no trace a binary metric, or a loss-watching reviewer, would
+catch. (The louder 2019-style leak, by contrast, co-occurs with the
+congestion and loss a competent model \emph{does} flag.)
 
 \paragraph{A candidate graduation test for network agents.} As an
 explicitly novel \emph{position} (a refinement orthogonal to TM~Forum's
@@ -840,7 +890,12 @@ descends from HELM~\cite{helm}.
 
 Single vendor dialect (FRR) and BGP-centric mechanisms in this release; the
 packet-filter dimension (D6) is deferred pending a vendor dialect whose
-ACLs Batfish models as interface filters. The D8 resource \emph{budget} is a
+ACLs Batfish models as interface filters. Deployed routing-security controls
+are orthogonal to the task we measure: RPKI origin validation would \emph{not}
+have flagged the 2019-style leak (its more-specifics carried the correct
+origin AS), and the leak-propagation defenses (RFC~9234 BGP Roles/Only-To-Customer,
+more-specific prefix filtering) act on the inter-domain control plane, not on
+the pre-deployment configuration review a model performs here. The D8 resource \emph{budget} is a
 declared scenario parameter (the route count is computed; the limit is
 spec'd, as platform limits are). Topologies are small (4--6 nodes), chosen
 for oracle determinism; scale is untested, and while we see no mechanism by
@@ -884,11 +939,11 @@ determinism-gated, judge-free benchmark for it, and measured where current
 LLMs sit. The line we found is not the one we expected: models---including
 mid-tier ones---catch the damage that announces itself, up to and including
 a second-order partial-ECMP blackhole, and never hallucinate a session
-loss; where most of them stumble---the one class that separates the
-reasoning frontier from the rest---is the damage that removes no object and
-only shifts the path: the leak-induced silent reroute past the inspection
-node, where the route still resolves, the session stays up, and reachability
-survives. Most of the fleet misses it even while catching the withdrawal,
+loss; where most of them stumble---on the one mechanism class we measured
+that splits the reasoning frontier from the rest---is the damage that removes
+no object and only shifts the path: the leak-induced silent reroute that
+diverts a victim's traffic onto an impostor's path, where the route still
+resolves, the session stays up, and reachability survives. Most of the fleet misses it even while catching the withdrawal,
 the lockout, and the blackhole, which all delete something nameable; only
 two models clear it---GPT-5.5 and the open-weight DeepSeek v4-pro, tied at the
 top and well above the rest---an open-weight model standing among the
@@ -1052,6 +1107,11 @@ P.~Liang et al.
 \newblock Holistic evaluation of language models.
 \newblock \emph{Transactions on Machine Learning Research}, 2023.
 arXiv:2211.09110.
+
+\bibitem{pilosov}
+A.~Pilosov and T.~Kapela.
+\newblock Stealing the {Internet}: An {Internet}-scale man-in-the-middle attack.
+\newblock In \emph{DEFCON~16}, 2008.
 
 \end{thebibliography}
 

@@ -962,3 +962,65 @@ coverage with the closed frontier models. ~$5 total, within caps.
 **Pending integration (when open-model + gemini data lands):** regrade all 8 models -> update
 Table 2 / appendix / figures / fleet description; reframe the reroute (GPT-5.5 exception);
 re-gauntlet. NOT done yet — data collection in progress.
+
+---
+
+## Day 28 (2026-06-15) — Family 2 + Family 3 BUILT (autonomous run)
+
+Unattended run (scheduled after the session-limit reset). Fan-out workflow authored 9
+generators; the lead authoritatively re-validated all of them (fresh seed base 600, full 10x
+determinism) — `temporary/validate_family23.py` -> `runs/oracle_verify_family23_20260615/`,
+**ALL_PASS=True** (every bypass -> pure {waypoint(D4),intent(D10)}, every no_op -> empty, 10x
+byte-identical).
+
+**Family 2 — comparator wedge (by locus):** `generator_far_as_prepend.py` (foreign-AS prepend),
+`generator_med_far_as.py` (foreign-AS MED; correctly re-based to OSPF-core/iBGP since MED is
+non-transitive across AS bounds), `generator_community_lp.py` (community->LP second-order),
+`generator_community_trigger.py` (adversarial neighbor community), `generator_clause_fallthrough.py`
+(route-map first-match shadow), `generator_remove_dead_prepend.py` (load-bearing prepend deletion),
+`generator_origin_code.py` (ORIGIN igp->incomplete swap).
+**Family 3 — projection:** `generator_rr_bestpath.py` (RR single-best, no-BGP-token OSPF-cost
+variant), `generator_agg_collapse.py` (aggregate summary-only suppresses the steering /25).
+
+Tests: +81 (tests/unit/test_generator_family23.py); full suite **777 passed / 1 skipped**
+(frozen core untouched). NOT committed (working tree).
+
+**TWO QUALITY FLAGS for /design-review + /red-team (oracle-PASS but not "clean"):**
+- `origin_code`: bypass diff BUNDLES a SET_MED route-map removal WITH the network<->redistribute-
+  static ORIGIN swap; the single-cause ORIGIN claim is not clean (MED side-effect may be the real
+  cause). PROVISIONAL — architect must confirm or rebuild as a single-cause diff before it counts.
+- `community_lp`: no_op edits a DIFFERENT node than bypass (weak positional tell, like Family-1
+  nexthop_elim). Harden the no_op (same-node cosmetic edit).
+
+**v1 catalog now = 13 mechanisms across 3 families** (Family 1 = 4, Family 2 = 7 incl. subtraction
+axis, Family 3 = 2), all FRR-gradeable + oracle-validated. NEXT: design-review the 3 flagged items
+(origin_code, community_lp, igp_summary distinctness), then wire generators into the suite/registry
++ sweep (data collection, additive). Deferred per-flow/overlay family stays v1.1/vendor.
+
+---
+
+## Day 27 (2026-06-14) — quiet-half diversification frozen + Family 1 BUILT
+
+**Reroute "quiet half" diversified 1 -> 5 cause-families** (defeats the "n=6 instances of one
+trick" reviewer objection). Two fleet workflows (divergence/develop/grade/ground over 15
+mechanisms, then a convergence-vet of the user's `interesting_scenarios.md` delta on the live
+pinned digest) -> frozen catalog `temporary/frozen_quiet_half_scenario_set.md`. Disposition:
+~13 v1-buildable mechanisms across 3 FRR-gradeable families + 2 axes; per-flow/overlay family
+(VRF-RT/PBR/FlowSpec/ADD-PATH/ECMP) DEFERRED — all UNMODELED on Batfish-FRR (live-tested;
+`import vrf` -> "not currently supported", FRR PBR/add-path ungrammared). See memory
+batfish_frr_gradeability_boundary.
+
+**Family 1 (recursive underlay displacement) — 4/4 mechanisms BUILT + LIVE-VALIDATED + TESTED:**
+- `generator_igp_metric.py` (flagship; one `ip ospf cost` line, zero BGP surface)
+- `generator_igp_summary.py` (ABR Type-3 summary metric; 5-node multi-area; `area range cost`
+  is Batfish-PARTIALLY_UNRECOGNIZED so realized via the ABR backbone `ip ospf cost` per RFC 2328
+  12.4.3 — distinctness vs flagship is a design-review note)
+- `generator_redistribute_ad.py` (OSPF AD 110 evicts iBGP AD 200; zero BGP surface)
+- `generator_nexthop_elim.py` (next-hop-self removal -> unresolvable -> win by elimination; strict
+  baseline MED discriminator dodges the router-id/ECMP trap; no_op has a positional tell -> red-team note)
+
+All: bypass -> pure {waypoint(D4),intent(D10)} only, no_op -> empty, 10x byte-identical, authoritatively
+re-validated by the lead on a fresh seed base. Artifacts: `runs/oracle_verify_igp_metric_20260614/`,
+`runs/oracle_verify_family1_20260614/`. Tests: 696 passed / 1 skipped (+63 new; frozen core untouched).
+NOT committed (working tree). NEXT: Families 2-3 (comparator wedge + projection), then wire the
+generators into the suite/registry + sweep (data collection, additive).
