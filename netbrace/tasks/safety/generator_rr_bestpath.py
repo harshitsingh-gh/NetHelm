@@ -129,6 +129,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -142,19 +143,47 @@ AXES = {
     "effect": EFFECT_VALUES,
 }
 
-# Baseline OSPF costs on rr's two egress-facing underlay interfaces. way strictly
-# cheaper PRE so rr's single best (and the reflected path) is the way egress.
-_COST_WAY_PRE = 10
-_COST_ALT_PRE = 100
-# Post values (chosen to keep a STRICT gap in the post snapshot too).
-_COST_WAY_RAISED = 200   # raise_way/bypass: 200 > 100 -> alt wins at rr
-_COST_ALT_LOWERED = 5    # lower_alt/bypass: 5 < 10  -> alt wins at rr
-_COST_ALT_RAISED = 300   # raise_way/no_op: 100->300, way (10) still wins (inert)
-_COST_WAY_LOWERED = 5    # lower_alt/no_op: 10->5,  way still wins (inert)
-
-# src<->rr underlay cost: cheap + fixed, never the discriminator. (Distinct from any
-# egress cost value so a cost-line swap on rr's egress interface is unambiguous.)
+# src<->rr underlay cost: cheap + fixed, never the discriminator (it is distinct from
+# every drawn egress cost by construction -- the egress costs are drawn >= 2 and the
+# strict-gap draw keeps the two "low" values >= 2, while the src link is 1).
 _SRC_LINK_COST = 1
+
+
+from dataclasses import dataclass as _dc  # local alias to keep the import block above clean
+
+
+@_dc(frozen=True)
+class _LinkCosts:
+    """Per-seed strict-gap OSPF costs on rr's two egress-facing interfaces. The six
+    values are STRICTLY increasing (way wins PRE):
+
+        way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+
+    so the edited interface's pre-cost ALONE cannot classify bypass vs no_op (a
+    value-memorization fingerprint the per-seed draw removes), and every snapshot has a
+    non-equal underlay metric gap (no ECMP/D5)."""
+
+    way_pre: int
+    alt_pre: int
+    way_raised: int
+    alt_lowered: int
+    alt_raised: int
+    way_lowered: int
+
+
+def _draw_link_costs(rng: random.Random) -> _LinkCosts:
+    """Draw a strict-gap-preserving set of rr egress `ip ospf cost` constants (identical
+    construction to generator_igp_metric._draw_link_costs)."""
+    margin = rng.randint(5, 40)
+    way_pre = rng.randint(30, 120)
+    alt_pre = way_pre + margin + rng.randint(5, 80)
+    way_raised = alt_pre + margin + rng.randint(5, 80)
+    alt_raised = way_raised + margin + rng.randint(5, 80)
+    alt_lowered = rng.randint(4, way_pre - 2)
+    way_lowered = rng.randint(2, alt_lowered - 1)
+    assert 2 <= way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+    return _LinkCosts(way_pre=way_pre, alt_pre=alt_pre, way_raised=way_raised,
+                      alt_lowered=alt_lowered, alt_raised=alt_raised, way_lowered=way_lowered)
 
 
 @dataclass(frozen=True)
@@ -212,6 +241,8 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    costs: _LinkCosts        # per-seed strict-gap OSPF rr->egress costs (value-leak fix)
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -231,8 +262,14 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # Drawn LAST so the addressing above stays byte-stable: the per-seed strict-gap
+    # costs (value-memorization fix) then the ROLE->POSITION swap (positional-leak fix).
+    costs = _draw_link_costs(rng)
+    swap = _rp.draw_swap(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
-                   link_block=link_block, customer_net=customer_net, name=name)
+                   link_block=link_block, customer_net=customer_net, name=name,
+                   costs=costs, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -249,11 +286,13 @@ class _Topo:
     ip: dict[tuple[str, str], str]
     customer_prefix: str
     customer_ip: str
+    rr_iface: dict[str, str]   # role -> the eth on RR toward that egress (swap-driven)
 
 
 def _build_topo(spec: RrBestpathSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-    rid_index = {"src": 1, "rr": 2, "way": 3, "alt": 4, "dst": 5}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "rr": 2, "way": 3, "alt": 4, "dst": 5}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -261,25 +300,27 @@ def _build_topo(spec: RrBestpathSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-rr   base .0  (src=.1,  rr=.2)    OSPF
-    #   rr-way   base .4  (rr=.5,   way=.6)   OSPF (rr-side cost is the KNOB)
-    #   rr-alt   base .8  (rr=.9,   alt=.10)  OSPF (rr-side cost is the KNOB)
-    #   way-dst  base .12 (way=.13, dst=.14)  eBGP (no OSPF)
-    #   alt-dst  base .16 (alt=.17, dst=.18)  eBGP (no OSPF)
+    # /30 link supernets. The role on physical slot 3 (loopback .3) takes rr-iface eth2
+    # (base .4) + dst base .12; the slot-4 role takes eth3 (base .8) + base .16. The swap
+    # decides which role is which slot, so the edited rr interface (eth2/eth3) and the
+    # link IPs of the WAYPOINT side move per seed -- zero positional label info.
+    lo_role = "way" if rid_index["way"] == 3 else "alt"   # role on slot 3 -> rr eth2
+    hi_role = "alt" if lo_role == "way" else "way"        # role on slot 4 -> rr eth3
+    rr_iface = {lo_role: "eth2", hi_role: "eth3"}
     ip: dict[tuple[str, str], str] = {
         ("src", "rr"): addr(1), ("rr", "src"): addr(2),
-        ("rr", "way"): addr(5), ("way", "rr"): addr(6),
-        ("rr", "alt"): addr(9), ("alt", "rr"): addr(10),
-        ("way", "dst"): addr(13), ("dst", "way"): addr(14),
-        ("alt", "dst"): addr(17), ("dst", "alt"): addr(18),
+        ("rr", lo_role): addr(5), (lo_role, "rr"): addr(6),
+        ("rr", hi_role): addr(9), (hi_role, "rr"): addr(10),
+        (lo_role, "dst"): addr(13), ("dst", lo_role): addr(14),
+        (hi_role, "dst"): addr(17), ("dst", hi_role): addr(18),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
     customer_ip = f"{params.customer_net}.1"
 
     return _Topo(params=params, spec=spec, name=name, loopback=loopback, ip=ip,
-                 customer_prefix=customer_prefix, customer_ip=customer_ip)
+                 customer_prefix=customer_prefix, customer_ip=customer_ip,
+                 rr_iface=rr_iface)
 
 
 # --------------------------------------------------------------------------- #
@@ -358,14 +399,21 @@ def _rr_config(topo: _Topo, *, cost_way: int, cost_alt: int) -> str:
     NOT applied — rr keeps the egress loopback so src resolves it recursively)."""
     p = topo.params
     lo = topo.loopback["rr"]
+    # Egress interfaces are rendered by PHYSICAL eth order (eth2/eth3); WHICH eth carries
+    # the waypoint role `way` vs `alt` is swap-driven per seed, while each carries its
+    # LOGICAL role's cost. So the edited rr interface index no longer predicts the label.
+    role_of = {topo.rr_iface["way"]: "way", topo.rr_iface["alt"]: "alt"}
+    cost_of = {"way": cost_way, "alt": cost_alt}
     eth = [("eth1", f"{topo.ip[('rr', 'src')]}/30"),
-           ("eth2", f"{topo.ip[('rr', 'way')]}/30"),
-           ("eth3", f"{topo.ip[('rr', 'alt')]}/30")]
+           ("eth2", f"{topo.ip[('rr', role_of['eth2'])]}/30"),
+           ("eth3", f"{topo.ip[('rr', role_of['eth3'])]}/30")]
     body = [_iface_header(topo.name["rr"], lo, eth, []), _frr_header(topo.name["rr"])]
     body.append(f"interface lo\n ip address {lo}/32\n ip ospf area 0\n!\n")
     body.append(_ospf_iface("eth1", f"{topo.ip[('rr', 'src')]}/30", cost=_SRC_LINK_COST))
-    body.append(_ospf_iface("eth2", f"{topo.ip[('rr', 'way')]}/30", cost=cost_way))
-    body.append(_ospf_iface("eth3", f"{topo.ip[('rr', 'alt')]}/30", cost=cost_alt))
+    body.append(_ospf_iface("eth2", f"{topo.ip[('rr', role_of['eth2'])]}/30",
+                            cost=cost_of[role_of['eth2']]))
+    body.append(_ospf_iface("eth3", f"{topo.ip[('rr', role_of['eth3'])]}/30",
+                            cost=cost_of[role_of['eth3']]))
     body.append(f"router ospf\n ospf router-id {lo}\n passive-interface lo\n!\n")
     body.append(f"router bgp {p.core_asn}\n")
     body.append(f" bgp router-id {lo}\n")
@@ -436,7 +484,8 @@ def _dst_config(topo: _Topo) -> str:
 def _baseline_configs(topo: _Topo) -> dict[str, str]:
     return {
         topo.name["src"]: _src_config(topo),
-        topo.name["rr"]: _rr_config(topo, cost_way=_COST_WAY_PRE, cost_alt=_COST_ALT_PRE),
+        topo.name["rr"]: _rr_config(topo, cost_way=topo.params.costs.way_pre,
+                                    cost_alt=topo.params.costs.alt_pre),
         topo.name["way"]: _egress_config(topo, "way"),
         topo.name["alt"]: _egress_config(topo, "alt"),
         topo.name["dst"]: _dst_config(topo),
@@ -447,37 +496,46 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 # The change: a single `ip ospf cost` edit on rr's egress-facing interface. Zero
 # BGP-namespace surface. eth2 = rr->way, eth3 = rr->alt.
 # --------------------------------------------------------------------------- #
-def _change_plan(spec: RrBestpathSpec) -> tuple[str, int, int]:
-    """Return (rr_iface_to_edit, before_cost, after_cost) for the spec.
+def _change_plan(topo: _Topo) -> tuple[str, str, int, int]:
+    """Return (edited_role, rr_iface, before_cost, after_cost) for the spec, using the
+    per-seed costs. The edited LOGICAL role per (knob, effect):
 
-    raise_way/bypass : edit eth2 (rr->way) 10 -> 200  (alt now wins at rr -> bypass)
-    raise_way/no_op  : edit eth3 (rr->alt, already losing) 100 -> 300 (way still wins)
-    lower_alt/bypass : edit eth3 (rr->alt) 100 -> 5   (alt now wins at rr -> bypass)
-    lower_alt/no_op  : edit eth2 (rr->way, already winning) 10 -> 5  (way still wins)
+    raise_way/bypass : raise the WAY-side cost above alt_pre (alt now wins at rr -> bypass)
+    raise_way/no_op  : raise the ALT-side cost (already losing) -> way still wins (inert)
+    lower_alt/bypass : lower the ALT-side cost below way_pre (alt now wins at rr -> bypass)
+    lower_alt/no_op  : lower the WAY-side cost (already winning) -> way still wins (inert)
+
+    The actual rr interface (eth2/eth3) is whichever eth that role's link occupies this
+    seed (swap-driven), so the edited interface index carries no trap/no_op label info.
     """
-    knob, effect = spec.knob, spec.effect
+    c = topo.params.costs
+    knob, effect = topo.spec.knob, topo.spec.effect
     if knob == "raise_way":
         if effect == "bypass":
-            return "eth2", _COST_WAY_PRE, _COST_WAY_RAISED
-        return "eth3", _COST_ALT_PRE, _COST_ALT_RAISED
+            role, before, after = "way", c.way_pre, c.way_raised
+        else:
+            role, before, after = "alt", c.alt_pre, c.alt_raised
     else:  # lower_alt
         if effect == "bypass":
-            return "eth3", _COST_ALT_PRE, _COST_ALT_LOWERED
-        return "eth2", _COST_WAY_PRE, _COST_WAY_LOWERED
+            role, before, after = "alt", c.alt_pre, c.alt_lowered
+        else:
+            role, before, after = "way", c.way_pre, c.way_lowered
+    return role, topo.rr_iface[role], before, after
 
 
 def _apply_change(topo: _Topo) -> str:
     """Build the unified diff for the one `ip ospf cost` edit on rr. The edited line is
     on the egress-facing interface (eth2/eth3); eth1 carries the fixed _SRC_LINK_COST
-    which never equals any egress cost, so the swap is unambiguous."""
-    iface, before_cost, after_cost = _change_plan(topo.spec)
+    which never equals any drawn egress cost, so the swap is unambiguous."""
+    c = topo.params.costs
+    role, _iface, before_cost, after_cost = _change_plan(topo)
 
-    if iface == "eth2":  # rr->way
-        before = _rr_config(topo, cost_way=before_cost, cost_alt=_COST_ALT_PRE)
-        after = _rr_config(topo, cost_way=after_cost, cost_alt=_COST_ALT_PRE)
-    else:  # eth3, rr->alt
-        before = _rr_config(topo, cost_way=_COST_WAY_PRE, cost_alt=before_cost)
-        after = _rr_config(topo, cost_way=_COST_WAY_PRE, cost_alt=after_cost)
+    if role == "way":  # edit the WAY-side cost; alt-side stays at its PRE value
+        before = _rr_config(topo, cost_way=before_cost, cost_alt=c.alt_pre)
+        after = _rr_config(topo, cost_way=after_cost, cost_alt=c.alt_pre)
+    else:              # edit the ALT-side cost; way-side stays at its PRE value
+        before = _rr_config(topo, cost_way=c.way_pre, cost_alt=before_cost)
+        after = _rr_config(topo, cost_way=c.way_pre, cost_alt=after_cost)
 
     old = f" ip ospf cost {before_cost}\n"
     new = f" ip ospf cost {after_cost}\n"
@@ -510,7 +568,7 @@ def _unified(before: str, after: str, node: str) -> str:
 # and the value, never whether rr's reflected best path moves.
 # --------------------------------------------------------------------------- #
 def _description(topo: _Topo) -> str:
-    iface, before_cost, after_cost = _change_plan(topo.spec)
+    _role, iface, before_cost, after_cost = _change_plan(topo)
     rr = topo.name["rr"]
     return (
         f"On `{rr}` (AS{topo.params.core_asn}), change the OSPF interface cost on "
@@ -569,9 +627,13 @@ def _scenario_from_spec(spec: RrBestpathSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"rr_bestpath_nodes_{seed}")
+    nodes = [rr, src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[rr, src, way, alt, dst],  # change_target (rr) first
+        nodes=nodes,  # order randomized per seed -> position carries no role info
         pre_configs=pre,
         change_target=rr,
         patch=patch,

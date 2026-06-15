@@ -43,8 +43,10 @@ from netbrace.graders.semantic_sets import (
 )
 from netbrace.reporting import baselines as bl
 from netbrace.reporting.baselines import empty_keysets, grade_keysets
-from netbrace.reporting.sweep_aggregate import aggregate_scenario_level
-from scripts.run_sweep import build_instances, _baseline_pred
+from netbrace.reporting.sweep_aggregate import (
+    aggregate_scenario_level, reroute_detection_scores, reroute_family_of)
+from scripts.run_sweep import (
+    build_instances, _baseline_pred, _is_reroute_instance, REROUTE_DIFFSHAPE_LEAKY)
 
 DIRS_WITH_RAW = ["sweep_20260610_213843", "sweep_20260611_000024"]
 GEMINI_MODEL = "gemini/gemini-3.5-flash"
@@ -332,6 +334,18 @@ def agg(records, label, grader, split) -> dict:
     dmg = {i: r for i, r in recs.items() if r and not r[0].get("gt_empty")}
     stats["macro_f1_damage"] = (aggregate_scenario_level(dmg)["macro_f1"] if dmg else None)
     stats["n_damage_instances"] = len(dmg)
+    # Non-gameable reroute headline (mirrors run_sweep._agg): NetBrace-Detect + Youden's J
+    # over the quiet-reroute slice, under whichever grader this regrade pass used.
+    rr_rows = []
+    for iid, rows in recs.items():
+        if not _is_reroute_instance(iid):
+            continue
+        fam = reroute_family_of(iid)
+        for r in rows:
+            rr_rows.append({**r, "family": fam, "instance": iid})
+    clean = [r for r in rr_rows if r["family"] not in REROUTE_DIFFSHAPE_LEAKY]
+    stats["reroute_detect"] = reroute_detection_scores(clean) if clean else None
+    stats["reroute_detect_all13"] = reroute_detection_scores(rr_rows) if rr_rows else None
     return stats
 
 

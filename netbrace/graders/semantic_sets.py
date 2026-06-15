@@ -319,6 +319,11 @@ def grade_keysets_semantic(
     truth_empty = not any(truth.get(t) for t in SCORED_TYPES)
     pred_empty = not any(pred.get(t) for t in SCORED_TYPES)
     false_alarm = is_trap and truth_empty and not pred_empty
+    # is_trap-INDEPENDENT calibration-twin false alarm: any empty-truth instance with a
+    # non-empty prediction (so the no_op (is_trap=False) FAR is computable). This is the
+    # SEMANTIC-grader signal the reroute detector's no_op arm reads. Additive, default
+    # False — backward-compatible.
+    empty_truth_false_alarm = truth_empty and not pred_empty
     # sessions has no CIDR slot -> identical to the exact grader (FSA provably unchanged).
     false_session_alarm = (not truth.get("sessions")) and bool(pred.get("sessions"))
 
@@ -337,6 +342,7 @@ def grade_keysets_semantic(
         valid_prediction=valid_prediction,
         is_trap=is_trap,
         false_alarm=false_alarm,
+        empty_truth_false_alarm=empty_truth_false_alarm,
         false_session_alarm=false_session_alarm,
         per_type=per_type,
         macro_f1=macro,

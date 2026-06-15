@@ -127,6 +127,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -200,6 +201,7 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -219,8 +221,14 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # Per-seed ROLE->POSITION swap (positional-leak fix): drawn LAST so all addressing
+    # above is byte-stable; it only decides which PHYSICAL slot the waypoint role `way`
+    # vs the bypass role `alt` occupies.
+    swap = _rp.draw_swap(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
-                   link_block=link_block, customer_net=customer_net, name=name)
+                   link_block=link_block, customer_net=customer_net, name=name,
+                   swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -238,8 +246,9 @@ class _Topo:
 
 
 def _build_topo(spec: NexthopElimSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-    rid_index = {"src": 1, "way": 2, "alt": 3, "dst": 4}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -247,16 +256,15 @@ def _build_topo(spec: NexthopElimSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-way base .0  (src=.1, way=.2)   OSPF
-    #   src-alt base .4  (src=.5, alt=.6)   OSPF
-    #   way-dst base .8  (way=.9, dst=.10)  eBGP (NOT in OSPF)
-    #   alt-dst base .12 (alt=.13, dst=.14) eBGP (NOT in OSPF)
+    # /30 link supernets carved by the (swapped) physical slot so the waypoint role's
+    # link IPs also move per seed (slot-2 role uses base .0/.8, slot-3 role .4/.12).
+    lo_role = "way" if rid_index["way"] == 2 else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
     ip: dict[tuple[str, str], str] = {
-        ("src", "way"): addr(1), ("way", "src"): addr(2),
-        ("src", "alt"): addr(5), ("alt", "src"): addr(6),
-        ("way", "dst"): addr(9), ("dst", "way"): addr(10),
-        ("alt", "dst"): addr(13), ("dst", "alt"): addr(14),
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
@@ -521,9 +529,13 @@ def _scenario_from_spec(spec: NexthopElimSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"nexthop_elim_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=change_node,
         patch=patch,

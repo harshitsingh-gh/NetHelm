@@ -146,6 +146,11 @@ def main() -> int:
                          "no number ships over un-gated instances).")
     ap.add_argument("--seed", type=int, default=0,
                     help="base seed for --generated (must match the sweep's --seed)")
+    ap.add_argument("--templated-set", default="reroutes",
+                    choices=["legacy", "reroutes", "both"], dest="templated_set",
+                    help="which templated family to gate (must match the sweep's "
+                         "--templated-set): legacy (ipc/leak/lp/scale), reroutes (the "
+                         "13 quiet-reroute generators; default), or both.")
     args = ap.parse_args()
 
     engine = _engine_fingerprint()
@@ -153,9 +158,14 @@ def main() -> int:
 
     scns = [scenarios.build(name) for name in sorted(scenarios.REGISTRY)]
     if args.generated:
-        # Same multi-mechanism suite the sweep scores (run_sweep.build_instances).
-        scns += list(scenarios.build_generated_suite_multi(args.generated,
-                                                           base_seed=args.seed))
+        # The SAME templated suite the sweep scores (run_sweep.build_instances) — gate
+        # whichever --templated-set the sweep will run.
+        if args.templated_set in ("legacy", "both"):
+            scns += list(scenarios.build_generated_suite_multi(args.generated,
+                                                               base_seed=args.seed))
+        if args.templated_set in ("reroutes", "both"):
+            scns += list(scenarios.build_generated_suite_reroutes(args.generated,
+                                                                  base_seed=args.seed))
 
     rows = []
     all_pass = True

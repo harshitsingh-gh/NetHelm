@@ -42,7 +42,8 @@ from pathlib import Path
 
 from netbrace.reporting import baselines as bl
 from netbrace.reporting.baselines import KeySets, grade_keysets
-from netbrace.reporting.sweep_aggregate import aggregate_scenario_level
+from netbrace.reporting.sweep_aggregate import (
+    aggregate_scenario_level, reroute_detection_scores, reroute_family_of)
 from netbrace.tasks.safety import scenarios
 
 # Pinned model IDs + their per-1M-token USD prices (input, output) for cost logging.
@@ -137,14 +138,40 @@ def resolve_temperature(model: str, override: float | None) -> float | None:
     return None
 
 
+_REROUTE_PREFIXES = tuple(p for (_m, _f, p) in scenarios.REROUTE_GENERATORS)
+
+# Families whose bypass/no_op twins differ in EDIT KIND (bypass ADDS a line, no_op
+# MODIFIES one) -> a diff-line-COUNT probe separates trap from no_op with zero routing
+# reasoning (the residual leak the 2026-06-15 positional-leak fix flagged as needing
+# structural rework). Held OUT of the NetBrace-Detect HEADLINE (still reported as the
+# `reroute_detect_all13` diagnostic in summary.json) so the showcased headline is robust
+# to a line-count probe, until the edit-kind asymmetry is fixed in those generators.
+REROUTE_DIFFSHAPE_LEAKY = frozenset({"far_as_prepend", "remove_dead_prepend", "origin_code"})
+
+
+def _is_reroute_instance(instance_id: str) -> bool:
+    """True if this templated instance is one of the 13 quiet-reroute mechanisms."""
+    return instance_id.startswith(_REROUTE_PREFIXES)
+
+
 def build_instances(split: str, n_generated: int, seed: int,
                     coarsen_class: bool = False,
-                    exclude: frozenset[str] = frozenset()) -> list[Instance]:
+                    exclude: frozenset[str] = frozenset(),
+                    templated_set: str = "legacy",
+                    include_noop: bool = True) -> list[Instance]:
     insts: list[Instance] = []
     if split in ("templated", "both"):
-        # Multi-mechanism templated split (audit 2026-06-10 K3): ipc + leak + lp +
-        # scale generators interleaved — never 96 photocopies of one mechanism.
-        for scn in scenarios.build_generated_suite_multi(n_generated, base_seed=seed):
+        # `templated_set` selects the mechanism family for the templated split:
+        #   legacy   -> ipc/leak/lp/scale (build_generated_suite_multi; audit K3)
+        #   reroutes -> the 13 quiet-reroute generators (bypass + no_op twins)
+        #   both     -> both, concatenated
+        gen_scns = []
+        if templated_set in ("legacy", "both"):
+            gen_scns += scenarios.build_generated_suite_multi(n_generated, base_seed=seed)
+        if templated_set in ("reroutes", "both"):
+            gen_scns += scenarios.build_generated_suite_reroutes(
+                n_generated, base_seed=seed, include_noop=include_noop)
+        for scn in gen_scns:
             insts.append(Instance(
                 scn=scn, instance_id=scn.name, split="templated",
                 cls=bl.scenario_class(scn.name, scn.provenance, coarsen=coarsen_class),
@@ -599,7 +626,9 @@ def run_sweep(args) -> dict:
         x.strip() for x in getattr(args, "exclude", "").split(",") if x.strip())
     instances = build_instances(args.split, args.n_generated, args.seed,
                                 coarsen_class=getattr(args, "coarsen_class", False),
-                                exclude=exclude)
+                                exclude=exclude,
+                                templated_set=getattr(args, "templated_set", "reroutes"),
+                                include_noop=(getattr(args, "bypass_fraction", 0.5) == 0.5))
     if getattr(args, "limit", 0):
         instances = instances[:args.limit]  # pre-flight cap (CLAUDE.md --limit rule)
     # --include: surgical top-up of EXACTLY the missing cells from an incomplete
@@ -843,6 +872,23 @@ def run_sweep(args) -> dict:
         stats["macro_f1_damage"] = (
             aggregate_scenario_level(dmg)["macro_f1"] if dmg else None)
         stats["n_damage_instances"] = len(dmg)
+        # Non-gameable reroute headline (NetBrace-Detect + Youden's J). macro_f1_damage
+        # is GAMEABLE for the quiet-reroute split: it drops the no_op calibration twins,
+        # so an always-predict-{D4,D10} predictor scores a perfect 1.0. The paired
+        # detector below pins any constant/label-independent predictor to 0.5 / J=0.
+        rr_rows = []
+        for iid, rows in recs.items():
+            if not _is_reroute_instance(iid):
+                continue
+            fam = reroute_family_of(iid)
+            for r in rows:
+                rr_rows.append({**r, "family": fam, "instance": iid})
+        # HEADLINE pools the leak-free families only; the diff-shape-leaky families are
+        # held out (still measured below as the all-13 diagnostic).
+        clean = [r for r in rr_rows if r["family"] not in REROUTE_DIFFSHAPE_LEAKY]
+        stats["reroute_detect"] = reroute_detection_scores(clean) if clean else None
+        stats["reroute_detect_all13"] = (
+            reroute_detection_scores(rr_rows) if rr_rows else None)
         return stats
 
     model_rows = [f"{m} @ {c}" for m in models for c in conditions]
@@ -977,6 +1023,44 @@ def render_table(summary: dict, models: list[str], splits: list[str]) -> str:
                 f"{fsa.get('mean', 0):.2f}±{fsa.get('std', 0):.2f} | "
                 f"{inv.get('mean', 0):.2f} |")
         out.append("")
+        # Reroute detection headline (only when the templated split carries reroutes).
+        def _f2(x):
+            return f"{x:.2f}" if isinstance(x, (int, float)) else "-"
+        rr_systems = [(n, k) for n, k in rows_models + rows_base
+                      if (summary["models"] if k == "model" else summary["baselines"])[n]
+                      .get(split, {}).get("reroute_detect")]
+        if rr_systems:
+            out.append("### Reroute detection — NON-GAMEABLE headline "
+                       "(balanced bypass-vs-no_op accuracy)")
+            out.append("| system | NetBrace-Detect | Youden_J | trap_recall [ci95] | "
+                       "no_op_FAR [ci95] | n_byp/n_noop |")
+            out.append("|" + "---|" * 6)
+            for name, kind in rr_systems:
+                store = summary["models"] if kind == "model" else summary["baselines"]
+                rr = store[name][split]["reroute_detect"]
+                det = rr.get("detail", {})
+                trc, farc = det.get("trap_recall", {}), det.get("no_op_far", {})
+                tr_ci = (f" [{_f2(trc.get('ci_lo'))},{_f2(trc.get('ci_hi'))}]"
+                         if trc.get("ci_lo") is not None else "")
+                far_ci = (f" [{_f2(farc.get('ci_lo'))},{_f2(farc.get('ci_hi'))}]"
+                          if farc.get("ci_lo") is not None else "")
+                out.append(
+                    f"| {name} | {_f2(rr.get('netbrace_detect'))} | "
+                    f"{_f2(rr.get('youden_j'))} | {_f2(rr.get('trap_recall'))}{tr_ci} | "
+                    f"{_f2(rr.get('no_op_far'))}{far_ci} | "
+                    f"{rr.get('n_bypass', '-')}/{rr.get('n_noop', '-')} |")
+            out.append("")
+            out.append("NetBrace-Detect = (trap_recall + (1-no_op_FAR))/2; any constant or "
+                       "label-independent predictor is pinned to 0.50 (Youden_J=0). "
+                       "trap_recall = recall-where-truth over D4/D10 on the bypass twins; "
+                       "no_op_FAR = false-alarm rate on the diff-shape-identical no_op "
+                       "calibration twins. THIS is the reroute headline — macro_f1_damage "
+                       "is gameable for this split (it drops the no_op twins). Headline is "
+                       "pooled over the leak-free families; far_as_prepend / "
+                       "remove_dead_prepend / origin_code are HELD OUT (residual "
+                       "diff-line-count leak) and reported as reroute_detect_all13 in "
+                       "summary.json.")
+            out.append("")
         out.append("FSA_rate = false_session_alarm rate: fraction of samples that "
                    "hallucinate a BGP session loss when none occurred. "
                    "macro dmg = damage-detection macro-F1 over instances with a "
@@ -1002,6 +1086,16 @@ def main() -> None:
     ap.add_argument("--n-generated", type=int, default=12,
                     help="number of templated (generated) instances")
     ap.add_argument("--seed", type=int, default=0, help="base seed for generated instances")
+    ap.add_argument("--templated-set", default="reroutes",
+                    choices=["legacy", "reroutes", "both"], dest="templated_set",
+                    help="which templated mechanism family to sweep: legacy "
+                         "(ipc/leak/lp/scale), reroutes (the 13 quiet-reroute generators "
+                         "— the bypass+no_op detection split, the default), or both.")
+    ap.add_argument("--bypass-fraction", type=float, default=0.5, dest="bypass_fraction",
+                    help="reroute bypass:no_op mix. 0.5 = paired calibration twins "
+                         "(include_noop=True, the anti-gaming control); 1.0 = bypass-only. "
+                         "NetBrace-Detect is balanced accuracy so the floor stays 0.5 "
+                         "regardless of mix.")
     ap.add_argument("--temperature", type=float, default=None,
                     help="OVERRIDE only (diagnostics). Default: per-family policy "
                          "(freeze gate 2026-06-10) — anthropic/vllm/fake sample at "

@@ -121,3 +121,129 @@ def test_fake_gt_scale_margin_and_fate():
         margin, fate = s.name[len("gen_scale_"):].rsplit("_s", 1)[0].split("-")
         assert bool(ks["scale"]) == margin.startswith("over"), s.name
         assert bool(ks["prefixes"]) == (fate == "withdrawn"), s.name
+
+
+# --------------------------------------------------------------------------- #
+# build_generated_suite_reroutes — the 13 quiet-reroute mechanism generators
+# (wiring 2026-06-15: the templated split must also cover the silent-path-shift
+# half; ONE round-robin builder enumerates all 13 with distinct seed bands so a
+# truncated prefix spans every mechanism and no two generators collide names).
+# --------------------------------------------------------------------------- #
+_REROUTE_PREFIXES = tuple(p for (_m, _f, p) in scenarios.REROUTE_GENERATORS)
+
+
+def _reroutes(n=52, seed=0, include_noop=True):
+    return scenarios.build_generated_suite_reroutes(
+        n, base_seed=seed, include_noop=include_noop)
+
+
+def test_reroutes_constant_is_the_thirteen():
+    assert len(scenarios.REROUTE_GENERATORS) == 13
+    # each entry is (module_slug, suite_fn_name, name_prefix) and the function exists.
+    import importlib
+    for mod_slug, fn_name, prefix in scenarios.REROUTE_GENERATORS:
+        mod = importlib.import_module(f"netbrace.tasks.safety.{mod_slug}")
+        assert callable(getattr(mod, fn_name)), (mod_slug, fn_name)
+        assert prefix.startswith("gen_") and prefix.endswith("_")
+
+
+def test_reroutes_exact_n_and_unique_names():
+    for n in (1, 13, 14, 26, 52, 130):
+        suite = _reroutes(n)
+        assert len(suite) == n, n
+        assert len({s.name for s in suite}) == n, f"dup names at n={n}"
+
+
+def test_reroutes_span_all_thirteen_prefixes():
+    # at n=52 (4 per generator) every mechanism must appear.
+    names = [s.name for s in _reroutes(52)]
+    for p in _REROUTE_PREFIXES:
+        assert any(nm.startswith(p) for nm in names), f"missing {p}"
+
+
+def test_reroutes_truncated_prefix_spans_first_k_generators():
+    # a small --n still spans distinct mechanisms (round-robin, one per gen up to k).
+    suite = _reroutes(13)
+    spanned = {p for p in _REROUTE_PREFIXES
+               if any(s.name.startswith(p) for s in suite)}
+    assert spanned == set(_REROUTE_PREFIXES)  # n=13 hits each generator exactly once
+
+
+def test_reroutes_all_templated_provenance():
+    assert all(s.provenance == "templated" for s in _reroutes(52))
+
+
+def test_reroutes_is_trap_is_fifty_fifty_with_noop():
+    # include_noop default -> balanced bypass:no_op (the anti-gaming calibration).
+    # holds once every generator emits an even count (n=26 -> 2/gen, n=52 -> 4/gen).
+    for n in (26, 52, 130):
+        suite = _reroutes(n)
+        n_trap = sum(1 for s in suite if s.is_trap)
+        n_safe = sum(1 for s in suite if not s.is_trap)
+        assert n_trap == n_safe == n // 2, (n, n_trap, n_safe)
+
+
+def test_reroutes_include_noop_false_is_all_traps():
+    suite = _reroutes(13, include_noop=False)
+    assert all(s.is_trap for s in suite), [s.name for s in suite if not s.is_trap]
+
+
+def test_reroutes_seed_reproducible_and_seed_sensitive():
+    a = [s.name for s in _reroutes(52, seed=7)]
+    b = [s.name for s in _reroutes(52, seed=7)]
+    c = [s.name for s in _reroutes(52, seed=8)]
+    assert a == b          # byte-identical for same base_seed
+    assert a != c          # seed-sensitive (contamination control)
+
+
+def test_reroutes_distinct_seed_bands_prevent_collisions():
+    # the per-generator seed stride must keep names globally unique even at large n
+    # (a shared seed across generators would produce colliding randomized octets).
+    big = _reroutes(260)            # 20 per generator
+    assert len({s.name for s in big}) == 260
+
+
+# --------------------------------------------------------------------------- #
+# fake_ground_truth — generic reroute branch (bypass -> {waypoint,intent}; no_op
+# -> COMPLETELY empty; D1 always empty). Required for the offline --oracle fake gate.
+# --------------------------------------------------------------------------- #
+def test_fake_gt_reroute_bypass_is_waypoint_intent_only():
+    suite = _reroutes(52)
+    seen = set()
+    for s in suite:
+        if not s.is_trap:
+            continue
+        fam = next(p for p in _REROUTE_PREFIXES if s.name.startswith(p))
+        seen.add(fam)
+        ks = fake_ground_truth(s)
+        nonempty = {k for k, v in ks.items() if v}
+        assert nonempty == {"waypoint", "intent"}, (s.name, nonempty)
+        assert ks["sessions"] == set()  # D1 always empty -> the trap invariant
+    assert seen == set(_REROUTE_PREFIXES)  # exercised every family's bypass
+
+
+def test_fake_gt_reroute_noop_is_completely_empty():
+    suite = _reroutes(52)
+    seen = set()
+    for s in suite:
+        if s.is_trap:
+            continue
+        fam = next(p for p in _REROUTE_PREFIXES if s.name.startswith(p))
+        seen.add(fam)
+        ks = fake_ground_truth(s)
+        assert all(not v for v in ks.values()), (s.name, ks)
+    assert seen == set(_REROUTE_PREFIXES)  # exercised every family's no_op
+
+
+def test_fake_gt_reroute_keys_match_scenario_waypoint_intents():
+    # the emitted waypoint/intent keys are derived from the scenario's own
+    # waypoint_intents + intent_invariants (the live-oracle key shape), not literals.
+    from netbrace.core.schemas import canon_node, canon_prefix
+    s = next(x for x in _reroutes(52) if x.name.startswith("gen_rr_bestpath_") and x.is_trap)
+    ks = fake_ground_truth(s)
+    (src, dst, via) = s.waypoint_intents[0]
+    assert ks["waypoint"] == {
+        f"waypoint|src={canon_node(src)}|dst={canon_prefix(dst)}|via={canon_node(via)}|vrf=default"}
+    inv = s.intent_invariants[0]
+    assert ks["intent"] == {
+        f"intent|kind={inv.kind}|src={canon_node(inv.src)}|dst={canon_prefix(inv.dst)}"}

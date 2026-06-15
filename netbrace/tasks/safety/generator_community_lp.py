@@ -142,6 +142,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +223,7 @@ class _Params:
     comm_c: str              # community tag the WAY path carries + src matches (C)
     comm_d: str              # community tag the ALT path carries (D, src ignores)
     comm_c2: str             # the rewrite target (C2, NOT in src's community-list)
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -253,9 +255,14 @@ def _draw_params(seed: int) -> _Params:
     comm_d = f"{ga}:{rng.randint(200, 299)}"
     comm_c2 = f"{ga}:{rng.randint(300, 399)}"
 
+    # Per-seed ROLE->POSITION swap (the positional-leak fix): drawn LAST so every
+    # addressing/community draw above is byte-identical to before; it only decides
+    # which PHYSICAL slot the waypoint role `way` vs the bypass role `alt` occupies.
+    swap = _rp.draw_swap(rng)
+
     return _Params(asn=asn, loop_block=loop_block, link_block=link_block,
                    customer_net=customer_net, name=name,
-                   comm_c=comm_c, comm_d=comm_d, comm_c2=comm_c2)
+                   comm_c=comm_c, comm_d=comm_d, comm_c2=comm_c2, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -277,9 +284,12 @@ class _Topo:
 
 
 def _build_topo(spec: CommunityLpSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-
-    rid_index = {"src": 1, "way": 2, "alt": 3, "dst": 4}
+    # Per-seed swap exchanges the PHYSICAL slot (loopback octet, name suffix, link-IP
+    # carving, node order) of the waypoint role `way` and the bypass role `alt`, so the
+    # edited node's identity/position carries ZERO trap/no_op label information.
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -287,16 +297,16 @@ def _build_topo(spec: CommunityLpSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets, one per link, carved from the link block:
-    #   link0 src-way  base .0  (src=.1, way=.2)
-    #   link1 src-alt  base .4  (src=.5, alt=.6)
-    #   link2 way-dst  base .8  (way=.9, dst=.10)
-    #   link3 alt-dst  base .12 (alt=.13, dst=.14)
+    # /30 link supernets carved from the link block. The way-side vs alt-side link
+    # blocks are assigned by the (swapped) physical slot so the waypoint role's link
+    # IPs also move per seed: slot-2 role uses base .0/.8, slot-3 role uses base .4/.12.
+    lo_role = "way" if rid_index["way"] == 2 else "alt"   # the role on physical slot 2
+    hi_role = "alt" if lo_role == "way" else "way"        # the role on physical slot 3
     ip: dict[tuple[str, str], str] = {
-        ("src", "way"): addr(1), ("way", "src"): addr(2),
-        ("src", "alt"): addr(5), ("alt", "src"): addr(6),
-        ("way", "dst"): addr(9), ("dst", "way"): addr(10),
-        ("alt", "dst"): addr(13), ("dst", "alt"): addr(14),
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
@@ -591,9 +601,15 @@ def _scenario_from_spec(spec: CommunityLpSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    # Node-list order is randomized per seed (a fresh deterministic stream) so the
+    # change_target's INDEX in `nodes` carries no trap/no_op information either.
+    node_rng = random.Random(f"community_lp_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=change_target,
         patch=patch,

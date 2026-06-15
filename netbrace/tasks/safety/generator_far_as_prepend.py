@@ -121,6 +121,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -188,6 +189,7 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -210,8 +212,12 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # Per-seed ROLE->POSITION swap (positional-leak fix), drawn LAST so addressing is
+    # byte-stable; decides which PHYSICAL slot the waypoint `way` vs bypass `alt` holds.
+    swap = _rp.draw_swap(rng)
+
     return _Params(asn=asn, loop_block=loop_block, link_block=link_block,
-                   customer_net=customer_net, name=name)
+                   customer_net=customer_net, name=name, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -231,9 +237,9 @@ class _Topo:
 
 
 def _build_topo(spec: FarAsPrependSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-
-    rid_index = {"src": 1, "way": 2, "alt": 3, "dst": 4}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -241,16 +247,15 @@ def _build_topo(spec: FarAsPrependSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-way base .0  (src=.1, way=.2)
-    #   src-alt base .4  (src=.5, alt=.6)
-    #   way-dst base .8  (way=.9, dst=.10)
-    #   alt-dst base .12 (alt=.13, dst=.14)
+    # /30 link supernets carved by the (swapped) physical slot so the waypoint side's
+    # loopback octet, name suffix and link IPs move per seed.
+    lo_role = "way" if rid_index["way"] == 2 else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
     ip: dict[tuple[str, str], str] = {
-        ("src", "way"): addr(1), ("way", "src"): addr(2),
-        ("src", "alt"): addr(5), ("alt", "src"): addr(6),
-        ("way", "dst"): addr(9), ("dst", "way"): addr(10),
-        ("alt", "dst"): addr(13), ("dst", "alt"): addr(14),
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
@@ -357,30 +362,37 @@ def _dst_config(topo: _Topo) -> str:
     lo = topo.loopback["dst"]
     dst_asn = p.asn["dst"]
     pre = topo.spec.pre_depth
-    eth = [("eth1", f"{topo.ip[('dst', 'way')]}{_LINK_MASK}"),
-           ("eth2", f"{topo.ip[('dst', 'alt')]}{_LINK_MASK}")]
+    # dst's two upstream-facing interfaces are ordered by the PHYSICAL slot of the
+    # upstream role (slot-2 role -> eth1, slot-3 role -> eth2); each outbound prepend
+    # route-map is named after the UPSTREAM NODE NAME (swapped per seed). The baseline
+    # prepend toward `alt` keeps the via-alt path longer (so way wins PRE). Neither the
+    # eth index nor the route-map name reveals which side is the waypoint.
+    lo_role = "way" if topo.loopback["way"].endswith(".2") else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
+    rm_name = {r: f"RM_TO_{topo.name[r].upper()}_OUT" for r in ("way", "alt")}
+    eth = [("eth1", f"{topo.ip[('dst', lo_role)]}{_LINK_MASK}"),
+           ("eth2", f"{topo.ip[('dst', hi_role)]}{_LINK_MASK}")]
     dummies = [("dum0", f"{topo.customer_ip}/24")]
     body = [_iface_header(topo.name["dst"], lo, eth, dummies), _frr_header(topo.name["dst"])]
     body.append(f"interface lo\n ip address {lo}/32\n!\n")
-    body.append(_plain_iface("eth1", f"{topo.ip[('dst', 'way')]}{_LINK_MASK}"))
-    body.append(_plain_iface("eth2", f"{topo.ip[('dst', 'alt')]}{_LINK_MASK}"))
+    body.append(_plain_iface("eth1", f"{topo.ip[('dst', lo_role)]}{_LINK_MASK}"))
+    body.append(_plain_iface("eth2", f"{topo.ip[('dst', hi_role)]}{_LINK_MASK}"))
     body.append(f"interface dum0\n ip address {topo.customer_ip}/24\n!\n")
-    # Outbound prepend maps. Toward way: plain permit (no prepend) in baseline.
-    body.append("route-map RM_TO_WAY_OUT permit 10\n!\n")
-    # Toward alt: prepend dst's own ASN `pre_depth` times -> the via-alt path is longer.
-    body.append(
-        "route-map RM_TO_ALT_OUT permit 10\n"
-        f"{_prepend_line(dst_asn, pre)}\n!\n"
-    )
+    # Outbound prepend maps, in physical-slot order. Toward `way`: plain permit (no
+    # prepend) baseline; toward `alt`: prepend dst's own ASN `pre_depth` times.
+    prepend_of = {"way": [], "alt": [_prepend_line(dst_asn, pre)]}
+    for r in (lo_role, hi_role):
+        lines = "".join(l + "\n" for l in prepend_of[r])
+        body.append(f"route-map {rm_name[r]} permit 10\n" + lines + "!\n")
     body.append(f"router bgp {dst_asn}\n")
     body.append(f" bgp router-id {lo}\n")
-    body.append(f" neighbor {topo.ip[('way', 'dst')]} remote-as {p.asn['way']}\n")
-    body.append(f" neighbor {topo.ip[('alt', 'dst')]} remote-as {p.asn['alt']}\n")
+    body.append(f" neighbor {topo.ip[(lo_role, 'dst')]} remote-as {p.asn[lo_role]}\n")
+    body.append(f" neighbor {topo.ip[(hi_role, 'dst')]} remote-as {p.asn[hi_role]}\n")
     body.append(" !\n address-family ipv4 unicast\n")
     body.append(f"  network {lo}/32\n")
     body.append(f"  network {topo.customer_prefix}\n")
-    body.append(f"  neighbor {topo.ip[('way', 'dst')]} route-map RM_TO_WAY_OUT out\n")
-    body.append(f"  neighbor {topo.ip[('alt', 'dst')]} route-map RM_TO_ALT_OUT out\n")
+    for r in (lo_role, hi_role):
+        body.append(f"  neighbor {topo.ip[(r, 'dst')]} route-map {rm_name[r]} out\n")
     body.append(" exit-address-family\n!\nline vty\n!\n")
     return "".join(body)
 
@@ -398,6 +410,12 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
 # The change: an OUTBOUND as-path-prepend edit on dst (the foreign customer AS).
 # change_target = dst. src is byte-identical pre and post.
 # --------------------------------------------------------------------------- #
+def _rm_name(topo: _Topo, role: str) -> str:
+    """The outbound prepend route-map name toward an upstream role -- named after that
+    upstream's (swapped) NODE NAME, so the name carries no waypoint/bypass label info."""
+    return f"RM_TO_{topo.name[role].upper()}_OUT"
+
+
 def _apply_change(topo: _Topo) -> str:
     effect = topo.spec.effect
     pre = topo.spec.pre_depth
@@ -410,21 +428,23 @@ def _apply_change(topo: _Topo) -> str:
         # pre (dst's prepend). via-way must exceed it: prepend dst's ASN (pre + 1)
         # times toward way -> via-way = 1 + (pre + 1) = pre + 2 > pre + 1. Strict.
         bypass_times = pre + 1
-        old = "route-map RM_TO_WAY_OUT permit 10\n!\n"
+        rm = _rm_name(topo, "way")
+        old = f"route-map {rm} permit 10\n!\n"
         new = (
-            "route-map RM_TO_WAY_OUT permit 10\n"
+            f"route-map {rm} permit 10\n"
             f"{_prepend_line(dst_asn, bypass_times)}\n!\n"
         )
     else:  # no_op
         # Extend the ALREADY-LONGER prepend toward `alt` (the losing path) by one more
         # dst-ASN hop. via-alt grows from (1 + pre) to (1 + pre + 1); via-way stays 1.
         # way is still strictly shorter -> the winner does not move -> empty GT.
+        rm = _rm_name(topo, "alt")
         old = (
-            "route-map RM_TO_ALT_OUT permit 10\n"
+            f"route-map {rm} permit 10\n"
             f"{_prepend_line(dst_asn, pre)}\n!\n"
         )
         new = (
-            "route-map RM_TO_ALT_OUT permit 10\n"
+            f"route-map {rm} permit 10\n"
             f"{_prepend_line(dst_asn, pre + 1)}\n!\n"
         )
 
@@ -456,7 +476,9 @@ def _unified(before: str, after: str, node: str) -> str:
 def _description(topo: _Topo) -> str:
     effect = topo.spec.effect
     dst = topo.name["dst"]
-    which = "RM_TO_WAY_OUT" if effect == "bypass" else "RM_TO_ALT_OUT"
+    # the edited route-map's NAME is whichever upstream's (swapped) node name applies this
+    # seed -> the name carries no waypoint/bypass label info.
+    which = _rm_name(topo, "way") if effect == "bypass" else _rm_name(topo, "alt")
     return (
         f"On `{dst}` (AS{topo.params.asn['dst']}, the customer-origin AS), edit the "
         f"outbound eBGP route-map `{which}` to add/extend a `set as-path prepend` "
@@ -509,9 +531,13 @@ def _scenario_from_spec(spec: FarAsPrependSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"far_as_prepend_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=dst,   # the DECISIVE edit lives in the foreign customer AS
         patch=patch,

@@ -733,3 +733,97 @@ def build_generated_suite_multi(n: int, *, base_seed: int = 0) -> list[Scenario]
                     break
         i += 1
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Quiet-reroute split — the 13 silent-path-shift mechanism generators.
+#
+# Each of these emits the SAME oracle contract: a ``-bypass`` instance whose change
+# silently moves traffic off a required waypoint (is_trap=True -> live oracle fires
+# {waypoint (D4), intent (D10)}) and a ``-no_op`` calibration twin that preserves the
+# intent (is_trap=False -> EMPTY blast). The 50/50 bypass:no_op ratio (include_noop)
+# is the anti-gaming control: a silent/always-fire predictor cannot game balanced
+# accuracy on it. All 13 share the public ``generate_<X>_suite(n, *, base_seed,
+# include_noop)`` API and prefix their scenario names ``gen_<X>_``.
+#
+# (module slug, suite function name, name prefix) — the single source of truth the
+# builder, the fake oracle, and the tests all key off.
+# --------------------------------------------------------------------------- #
+REROUTE_GENERATORS: list[tuple[str, str, str]] = [
+    ("generator_agg_collapse", "generate_agg_collapse_suite", "gen_agg_collapse_"),
+    ("generator_clause_fallthrough", "generate_clause_fallthrough_suite", "gen_clause_fallthrough_"),
+    ("generator_community_lp", "generate_community_lp_suite", "gen_community_lp_"),
+    ("generator_community_trigger", "generate_community_trigger_suite", "gen_community_trigger_"),
+    ("generator_far_as_prepend", "generate_far_as_prepend_suite", "gen_far_as_prepend_"),
+    ("generator_igp_metric", "generate_igp_metric_suite", "gen_igp_metric_"),
+    ("generator_igp_summary", "generate_igp_summary_suite", "gen_igp_summary_"),
+    ("generator_med_far_as", "generate_med_far_as_suite", "gen_med_far_as_"),
+    ("generator_nexthop_elim", "generate_nexthop_elim_suite", "gen_nexthop_elim_"),
+    ("generator_origin_code", "generate_origin_code_suite", "gen_origin_code_"),
+    ("generator_redistribute_ad", "generate_redistribute_ad_suite", "gen_redistribute_ad_"),
+    ("generator_remove_dead_prepend", "generate_remove_dead_prepend_suite", "gen_remove_dead_prepend_"),
+    ("generator_rr_bestpath", "generate_rr_bestpath_suite", "gen_rr_bestpath_"),
+]
+
+# Distinct seed band per generator so no two generators draw colliding per-seed
+# addressing / node names (verified necessary: same seed -> same randomized
+# octets across generators, which would collide names/addresses). A prime stride
+# keeps bands far apart even at large n.
+_REROUTE_SEED_STRIDE = 10007
+
+
+def build_generated_suite_reroutes(
+    n: int, *, base_seed: int = 0, include_noop: bool = True
+) -> list[Scenario]:
+    """Enumerate ``n`` generated instances across ALL 13 quiet-reroute generators.
+
+    The templated split's silent-path-shift half: 13 distinct mechanisms (aggregate
+    collapse, route-map clause fall-through, community->LP, community trigger, far-AS
+    prepend, IGP metric, IGP summary, MED+far-AS, next-hop elimination, origin code,
+    redistribution AD, dead-prepend removal, RR best-path) that each move traffic off
+    a required waypoint with the BGP/IGP sessions still ESTABLISHED — the blast-radius
+    thesis. Each generator contributes a 50/50 ``-bypass``/``-no_op`` mix (the
+    anti-gaming calibration control; the metric uses BALANCED ACCURACY, so the 50/50
+    ratio is correct — do not skew it).
+
+    Allocation is round-robin across the 13 so a TRUNCATED prefix (small ``n``) still
+    spans every mechanism: position ``i`` draws from generator ``i % 13``, and the
+    k-th draw of a generator uses its own band offset so the suites interleave but
+    never share seeds. Each generator gets a DISTINCT seed band
+    (``base_seed + idx * _REROUTE_SEED_STRIDE``) so per-seed addressing / names never
+    collide across generators.
+
+    Returns exactly ``n`` distinct Scenarios, all ``provenance='templated'``, with
+    ``is_trap`` set by each generator (bypass=True, no_op=False). Additive: the
+    legacy ``build_generated_suite_multi`` (the frozen legacy-4 contract pinned by
+    test_generated_multi) is untouched.
+    """
+    import importlib
+
+    g = len(REROUTE_GENERATORS)
+    # round-robin allocation: first ``rem`` generators emit one extra so the totals
+    # sum to exactly ``n`` and the truncated prefix [0:k] spans the first k generators.
+    base_each, rem = divmod(n, g)
+    suites: list[list[Scenario]] = []
+    for idx, (mod_slug, fn_name, _prefix) in enumerate(REROUTE_GENERATORS):
+        each = base_each + (1 if idx < rem else 0)
+        if each == 0:
+            suites.append([])
+            continue
+        mod = importlib.import_module(f"netbrace.tasks.safety.{mod_slug}")
+        suite_fn = getattr(mod, fn_name)
+        suites.append(
+            suite_fn(each, base_seed=base_seed + idx * _REROUTE_SEED_STRIDE,
+                     include_noop=include_noop)
+        )
+
+    out: list[Scenario] = []
+    i = 0
+    while len(out) < n:
+        for s in suites:
+            if i < len(s):
+                out.append(s[i])
+                if len(out) == n:
+                    break
+        i += 1
+    return out

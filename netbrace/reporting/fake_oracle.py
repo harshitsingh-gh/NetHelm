@@ -89,9 +89,54 @@ def fake_ground_truth(scn) -> KeySets:
         return _fake_gen_lp(scn)
     if name.startswith("gen_scale_"):
         return _fake_gen_scale(scn)
+    if _is_reroute(scn):
+        return _fake_gen_reroute(scn)
 
     # Hand-authored scenarios: documented GT shape (D1 always empty -> the trap).
     return _fake_handauthored(scn)
+
+
+# The 13 quiet-reroute name prefixes — single source of truth in scenarios. Imported
+# lazily so this module stays import-light and free of a hard scenarios dependency.
+def _reroute_prefixes() -> tuple[str, ...]:
+    from netbrace.tasks.safety.scenarios import REROUTE_GENERATORS
+    return tuple(prefix for (_m, _f, prefix) in REROUTE_GENERATORS)
+
+
+def _is_reroute(scn) -> bool:
+    """A templated quiet-reroute instance: name carries one of the 13 reroute
+    prefixes (the structural test). The waypoint_intents + is_trap fields are the
+    behavioural fingerprint, but the name prefix is the cheap, exact discriminator."""
+    name = getattr(scn, "name", "")
+    return any(name.startswith(p) for p in _reroute_prefixes())
+
+
+def _fake_gen_reroute(scn) -> KeySets:
+    """Generic GT for ALL 13 quiet-reroute generators (silent path-shift).
+
+    The live-oracle contract for these is uniform regardless of mechanism:
+      * BYPASS (is_trap=True): the change silently moves traffic off the required
+        waypoint while sessions stay ESTABLISHED -> D4 waypoint (from
+        ``waypoint_intents``) + D10 intent (from ``intent_invariants``) fire,
+        everything else (D1/D2/D3/...) stays EMPTY. This is the thesis.
+      * NO_OP (is_trap=False): the calibration twin preserves the intent -> the
+        CORRECT answer is NO blast at all -> COMPLETELY EMPTY (even though the
+        scenario still declares its waypoint_intents/intent_invariants as silent
+        anchors; they are NOT violated, so they are NOT in the GT).
+
+    Mirrors ``_fake_gen_leak``'s ms_reroute branch (the same {waypoint, intent}
+    shape) and the no_op-is-empty calibration rule from ``_fake_gen_lp``. D1 is
+    always empty here — the NetHELM trap invariant."""
+    ks = empty_keysets()
+    if not getattr(scn, "is_trap", False):
+        # no_op calibration twin: intent preserved -> the correct GT is empty.
+        return ks
+    for (s, d, w) in (scn.waypoint_intents or []):
+        ks["waypoint"].add(
+            f"waypoint|src={canon_node(s)}|dst={canon_prefix(d)}|via={canon_node(w)}|vrf=default")
+    for inv in (scn.intent_invariants or []):
+        ks["intent"].add(_intent_key(inv.kind, inv.src or "*", inv.dst))
+    return ks
 
 
 def _affected_clients(scn, axes) -> list[str]:

@@ -165,6 +165,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -178,14 +179,41 @@ AXES = {
     "effect": EFFECT_VALUES,
 }
 
-# Baseline per-link MEDs dst advertises (way strictly lower PRE -> way wins).
-_MED_WAY_PRE = 50
-_MED_ALT_PRE = 200
-# Post values (chosen to keep a STRICT MED gap in the post snapshot too).
-_MED_WAY_RAISED = 300   # raise_way/bypass: 300 > 200 -> alt wins
-_MED_ALT_LOWERED = 10   # lower_alt/bypass: 10 < 50  -> alt wins
-_MED_ALT_RAISED = 400   # raise_way/no_op: 200->400, way (50) still wins (inert)
-_MED_WAY_LOWERED = 5    # lower_alt/no_op: 50->5,   way still wins (inert)
+from dataclasses import dataclass as _dc
+
+
+@_dc(frozen=True)
+class _MedValues:
+    """Per-seed strict-gap MEDs dst advertises on each uplink. STRICTLY increasing
+    (way wins PRE so the way-side MED is the cheaper):
+
+        way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+
+    so the edited MED route-map's pre-value ALONE cannot classify bypass vs no_op (the
+    value-memorization fingerprint the hardcoded {50,200,300,10,400,5} block had), and
+    every snapshot keeps a STRICT (non-equal) MED gap (no ECMP/D5)."""
+
+    way_pre: int
+    alt_pre: int
+    way_raised: int
+    alt_lowered: int
+    alt_raised: int
+    way_lowered: int
+
+
+def _draw_meds(rng: random.Random) -> _MedValues:
+    """Draw a strict-gap-preserving set of `set metric` MED constants (identical
+    construction to generator_igp_metric._draw_link_costs; MED is 0..2^32-1)."""
+    margin = rng.randint(5, 40)
+    way_pre = rng.randint(30, 120)
+    alt_pre = way_pre + margin + rng.randint(5, 80)
+    way_raised = alt_pre + margin + rng.randint(5, 80)
+    alt_raised = way_raised + margin + rng.randint(5, 80)
+    alt_lowered = rng.randint(4, way_pre - 2)
+    way_lowered = rng.randint(2, alt_lowered - 1)
+    assert 2 <= way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+    return _MedValues(way_pre=way_pre, alt_pre=alt_pre, way_raised=way_raised,
+                      alt_lowered=alt_lowered, alt_raised=alt_raised, way_lowered=way_lowered)
 
 
 @dataclass(frozen=True)
@@ -242,6 +270,8 @@ class _Params:
     link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
+    meds: _MedValues         # per-seed strict-gap MEDs (value-memorization fix)
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -261,8 +291,14 @@ def _draw_params(seed: int) -> _Params:
     base = rng.choice(_NAME_POOLS)
     name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
 
+    # Drawn LAST so the addressing above is byte-stable: per-seed strict-gap MEDs
+    # (value-memorization fix) then the ROLE->POSITION swap (positional-leak fix).
+    meds = _draw_meds(rng)
+    swap = _rp.draw_swap(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
-                   link_block=link_block, customer_net=customer_net, name=name)
+                   link_block=link_block, customer_net=customer_net, name=name,
+                   meds=meds, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -280,8 +316,9 @@ class _Topo:
 
 
 def _build_topo(spec: MedFarAsSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-    rid_index = {"src": 1, "way": 2, "alt": 3, "dst": 4}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -289,16 +326,15 @@ def _build_topo(spec: MedFarAsSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-way base .0  (src=.1, way=.2)   OSPF
-    #   src-alt base .4  (src=.5, alt=.6)   OSPF
-    #   way-dst base .8  (way=.9, dst=.10)  eBGP
-    #   alt-dst base .12 (alt=.13, dst=.14) eBGP
+    # /30 link supernets carved by the (swapped) physical slot so the waypoint role's
+    # loopback octet, name suffix and link IPs move per seed.
+    lo_role = "way" if rid_index["way"] == 2 else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
     ip: dict[tuple[str, str], str] = {
-        ("src", "way"): addr(1), ("way", "src"): addr(2),
-        ("src", "alt"): addr(5), ("alt", "src"): addr(6),
-        ("way", "dst"): addr(9), ("dst", "way"): addr(10),
-        ("alt", "dst"): addr(13), ("dst", "alt"): addr(14),
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
@@ -419,27 +455,34 @@ def _dst_config(topo: _Topo, *, med_way: int, med_alt: int) -> str:
     MED comparator (no same-AS gate; see batfish_verified_facts.md)."""
     p = topo.params
     lo = topo.loopback["dst"]
-    eth = [("eth1", f"{topo.ip[('dst', 'way')]}/30"),
-           ("eth2", f"{topo.ip[('dst', 'alt')]}/30")]
+    # dst's two egress-facing interfaces are ordered by the PHYSICAL slot of the egress
+    # role (slot-2 role -> eth1, slot-3 role -> eth2); and each outbound MED route-map is
+    # named after the EGRESS NODE NAME (which is swapped per seed), so neither the eth
+    # index nor the route-map name reveals which side is the waypoint.
+    lo_role = "way" if topo.loopback["way"].endswith(".2") else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
+    med_of = {"way": med_way, "alt": med_alt}
+    rm_name = {r: f"MED_TO_{topo.name[r].upper()}_OUT" for r in ("way", "alt")}
+    eth = [("eth1", f"{topo.ip[('dst', lo_role)]}/30"),
+           ("eth2", f"{topo.ip[('dst', hi_role)]}/30")]
     dummies = [("dum0", f"{topo.customer_ip}/24")]
     body = [_iface_header(topo.name["dst"], lo, eth, dummies), _frr_header(topo.name["dst"])]
     body.append(f"interface lo\n ip address {lo}/32\n!\n")
-    body.append(_plain_iface("eth1", f"{topo.ip[('dst', 'way')]}/30"))
-    body.append(_plain_iface("eth2", f"{topo.ip[('dst', 'alt')]}/30"))
+    body.append(_plain_iface("eth1", f"{topo.ip[('dst', lo_role)]}/30"))
+    body.append(_plain_iface("eth2", f"{topo.ip[('dst', hi_role)]}/30"))
     body.append(f"interface dum0\n ip address {topo.customer_ip}/24\n!\n")
-    # The two outbound MED route-maps (the KNOB). MED_TO_WAY_OUT toward `way`,
-    # MED_TO_ALT_OUT toward `alt`.
-    body.append(f"route-map MED_TO_WAY_OUT permit 10\n set metric {med_way}\n!\n")
-    body.append(f"route-map MED_TO_ALT_OUT permit 10\n set metric {med_alt}\n!\n")
+    # The two outbound MED route-maps (the KNOB), one per egress, named per egress node.
+    for r in (lo_role, hi_role):
+        body.append(f"route-map {rm_name[r]} permit 10\n set metric {med_of[r]}\n!\n")
     body.append(f"router bgp {p.dst_asn}\n")
     body.append(f" bgp router-id {lo}\n")
-    body.append(f" neighbor {topo.ip[('way', 'dst')]} remote-as {p.core_asn}\n")
-    body.append(f" neighbor {topo.ip[('alt', 'dst')]} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.ip[(lo_role, 'dst')]} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.ip[(hi_role, 'dst')]} remote-as {p.core_asn}\n")
     body.append(" !\n address-family ipv4 unicast\n")
     body.append(f"  network {lo}/32\n")
     body.append(f"  network {topo.customer_prefix}\n")
-    body.append(f"  neighbor {topo.ip[('way', 'dst')]} route-map MED_TO_WAY_OUT out\n")
-    body.append(f"  neighbor {topo.ip[('alt', 'dst')]} route-map MED_TO_ALT_OUT out\n")
+    for r in (lo_role, hi_role):
+        body.append(f"  neighbor {topo.ip[(r, 'dst')]} route-map {rm_name[r]} out\n")
     body.append(" exit-address-family\n!\nline vty\n!\n")
     return "".join(body)
 
@@ -449,46 +492,52 @@ def _baseline_configs(topo: _Topo) -> dict[str, str]:
         topo.name["src"]: _src_config(topo),
         topo.name["way"]: _egress_config(topo, "way"),
         topo.name["alt"]: _egress_config(topo, "alt"),
-        topo.name["dst"]: _dst_config(topo, med_way=_MED_WAY_PRE, med_alt=_MED_ALT_PRE),
+        topo.name["dst"]: _dst_config(topo, med_way=topo.params.meds.way_pre,
+                                     med_alt=topo.params.meds.alt_pre),
     }
 
 
 # --------------------------------------------------------------------------- #
 # The change: a single ``set metric`` edit on dst. Zero provider-namespace surface.
 # --------------------------------------------------------------------------- #
-def _apply_change(topo: _Topo) -> str:
-    knob, effect = topo.spec.knob, topo.spec.effect
-    before = _dst_config(topo, med_way=_MED_WAY_PRE, med_alt=_MED_ALT_PRE)
+def _med_rm_name(topo: _Topo, role: str) -> str:
+    """The outbound MED route-map name for an egress role -- named after that egress's
+    (swapped) NODE NAME, so the name carries no waypoint/bypass label info."""
+    return f"MED_TO_{topo.name[role].upper()}_OUT"
 
+
+def _med_edit_plan(topo: _Topo) -> tuple[str, int, int, int, int]:
+    """Return (edited_role, before_med, after_med, post_med_way, post_med_alt) per
+    (knob, effect), using the per-seed MEDs. The edited LOGICAL role's route-map is the
+    one touched; its physical name varies per seed (see _med_rm_name)."""
+    m = topo.params.meds
+    knob, effect = topo.spec.knob, topo.spec.effect
     if knob == "raise_way":
-        # bypass: raise dst->way MED 50->300 (alt's 200 now wins).
-        # no_op : raise dst->alt MED 200->400 (alt was already losing; way still wins).
-        if effect == "bypass":
-            old = f"route-map MED_TO_WAY_OUT permit 10\n set metric {_MED_WAY_PRE}\n"
-            new = f"route-map MED_TO_WAY_OUT permit 10\n set metric {_MED_WAY_RAISED}\n"
-            after = _dst_config(topo, med_way=_MED_WAY_RAISED, med_alt=_MED_ALT_PRE)
-        else:
-            old = f"route-map MED_TO_ALT_OUT permit 10\n set metric {_MED_ALT_PRE}\n"
-            new = f"route-map MED_TO_ALT_OUT permit 10\n set metric {_MED_ALT_RAISED}\n"
-            after = _dst_config(topo, med_way=_MED_WAY_PRE, med_alt=_MED_ALT_RAISED)
+        if effect == "bypass":      # raise the way-side MED above alt_pre (alt now wins)
+            return "way", m.way_pre, m.way_raised, m.way_raised, m.alt_pre
+        else:                       # raise the alt-side (already losing) -> way still wins
+            return "alt", m.alt_pre, m.alt_raised, m.way_pre, m.alt_raised
     else:  # lower_alt
-        # bypass: lower dst->alt MED 200->10 (alt now beats way's 50).
-        # no_op : lower dst->way MED 50->5 (way was already winning; still wins).
-        if effect == "bypass":
-            old = f"route-map MED_TO_ALT_OUT permit 10\n set metric {_MED_ALT_PRE}\n"
-            new = f"route-map MED_TO_ALT_OUT permit 10\n set metric {_MED_ALT_LOWERED}\n"
-            after = _dst_config(topo, med_way=_MED_WAY_PRE, med_alt=_MED_ALT_LOWERED)
-        else:
-            old = f"route-map MED_TO_WAY_OUT permit 10\n set metric {_MED_WAY_PRE}\n"
-            new = f"route-map MED_TO_WAY_OUT permit 10\n set metric {_MED_WAY_LOWERED}\n"
-            after = _dst_config(topo, med_way=_MED_WAY_LOWERED, med_alt=_MED_ALT_PRE)
+        if effect == "bypass":      # lower the alt-side MED below way_pre (alt now wins)
+            return "alt", m.alt_pre, m.alt_lowered, m.way_pre, m.alt_lowered
+        else:                       # lower the way-side (already winning) -> way still wins
+            return "way", m.way_pre, m.way_lowered, m.way_lowered, m.alt_pre
+
+
+def _apply_change(topo: _Topo) -> str:
+    m = topo.params.meds
+    before = _dst_config(topo, med_way=m.way_pre, med_alt=m.alt_pre)
+    role, before_med, after_med, post_way, post_alt = _med_edit_plan(topo)
+    rm = _med_rm_name(topo, role)
+    old = f"route-map {rm} permit 10\n set metric {before_med}\n"
+    new = f"route-map {rm} permit 10\n set metric {after_med}\n"
+    after = _dst_config(topo, med_way=post_way, med_alt=post_alt)
 
     if old not in before:
         raise RuntimeError(
             f"change anchor {old!r} not found for {topo.spec.dims_label()} on dst "
             f"(seed render drift)"
         )
-    # Sanity: the rebuilt `after` config must equal a single in-place value swap.
     if before.replace(old, new, 1) != after:
         raise RuntimeError(
             f"change for {topo.spec.dims_label()} is not a single-line MED swap"
@@ -513,16 +562,11 @@ def _unified(before: str, after: str, node: str) -> str:
 # the value, never whether the best path / chosen egress moves.
 # --------------------------------------------------------------------------- #
 def _description(topo: _Topo) -> str:
-    knob, effect = topo.spec.knob, topo.spec.effect
     dst = topo.name["dst"]
-    if knob == "raise_way":
-        rmap = "MED_TO_WAY_OUT" if effect == "bypass" else "MED_TO_ALT_OUT"
-        frm = _MED_WAY_PRE if effect == "bypass" else _MED_ALT_PRE
-        to = _MED_WAY_RAISED if effect == "bypass" else _MED_ALT_RAISED
-    else:  # lower_alt
-        rmap = "MED_TO_ALT_OUT" if effect == "bypass" else "MED_TO_WAY_OUT"
-        frm = _MED_ALT_PRE if effect == "bypass" else _MED_WAY_PRE
-        to = _MED_ALT_LOWERED if effect == "bypass" else _MED_WAY_LOWERED
+    # The edited route-map's NAME is whichever egress's (swapped) node name applies this
+    # seed; frm/to are the per-seed MED values. Neither reveals the waypoint side.
+    role, frm, to, _pw, _pa = _med_edit_plan(topo)
+    rmap = _med_rm_name(topo, role)
     return (
         f"On `{dst}` (AS{topo.params.dst_asn}), change the outbound eBGP route-map "
         f"`{rmap}` so its `set metric` value goes from {frm} to {to} (a one-line "
@@ -573,9 +617,13 @@ def _scenario_from_spec(spec: MedFarAsSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"med_far_as_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=dst,
         patch=patch,

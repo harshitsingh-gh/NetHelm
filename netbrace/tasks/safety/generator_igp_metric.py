@@ -117,6 +117,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -244,6 +245,7 @@ class _Params:
     customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
     name: dict[str, str]     # role -> randomized node name string
     costs: _LinkCosts        # randomized strict-gap OSPF underlay-cost constants
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -266,9 +268,14 @@ def _draw_params(seed: int) -> _Params:
     # Drawn LAST so the ASN/IP/name addressing above stays byte-identical to before.
     costs = _draw_link_costs(rng)
 
+    # Per-seed ROLE->POSITION swap (positional-leak fix): decides which PHYSICAL slot
+    # (src interface index eth1/eth2, loopback octet, name suffix, node order) the
+    # waypoint role `way` vs the bypass role `alt` occupies.
+    swap = _rp.draw_swap(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
                    link_block=link_block, customer_net=customer_net, name=name,
-                   costs=costs)
+                   costs=costs, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -283,11 +290,13 @@ class _Topo:
     ip: dict[tuple[str, str], str]
     customer_prefix: str
     customer_ip: str
+    src_iface: dict[str, str]   # role -> the eth on SRC toward that egress (swap-driven)
 
 
 def _build_topo(spec: IgpMetricSpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-    rid_index = {"src": 1, "way": 2, "alt": 3, "dst": 4}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -295,23 +304,26 @@ def _build_topo(spec: IgpMetricSpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-way base .0  (src=.1, way=.2)   OSPF
-    #   src-alt base .4  (src=.5, alt=.6)   OSPF
-    #   way-dst base .8  (way=.9, dst=.10)  eBGP
-    #   alt-dst base .12 (alt=.13, dst=.14) eBGP
+    # /30 link supernets carved by the (swapped) physical slot: the role on physical
+    # slot 2 takes src-iface eth1 (base .0) and dst-link base .8; the slot-3 role takes
+    # eth2 (base .4) and base .12. So the eth index / link IPs of the WAYPOINT side move
+    # per seed -- the edited-interface identity carries no trap/no_op label info.
+    lo_role = "way" if rid_index["way"] == 2 else "alt"   # role on physical slot 2 -> eth1
+    hi_role = "alt" if lo_role == "way" else "way"        # role on physical slot 3 -> eth2
+    src_iface = {lo_role: "eth1", hi_role: "eth2"}
     ip: dict[tuple[str, str], str] = {
-        ("src", "way"): addr(1), ("way", "src"): addr(2),
-        ("src", "alt"): addr(5), ("alt", "src"): addr(6),
-        ("way", "dst"): addr(9), ("dst", "way"): addr(10),
-        ("alt", "dst"): addr(13), ("dst", "alt"): addr(14),
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
     }
 
     customer_prefix = f"{params.customer_net}.0/24"
     customer_ip = f"{params.customer_net}.1"
 
     return _Topo(params=params, spec=spec, name=name, loopback=loopback, ip=ip,
-                 customer_prefix=customer_prefix, customer_ip=customer_ip)
+                 customer_prefix=customer_prefix, customer_ip=customer_ip,
+                 src_iface=src_iface)
 
 
 # --------------------------------------------------------------------------- #
@@ -361,15 +373,25 @@ def _plain_iface(iface: str, ipm: str) -> str:
 
 def _src_config(topo: _Topo, *, cost_way: int, cost_alt: int) -> str:
     """src: OSPF to way+alt (the metric-bearing links carry the KNOB), iBGP to both,
-    no BGP policy. The two received customer paths are attribute-tied."""
+    no BGP policy. The two received customer paths are attribute-tied.
+
+    Interfaces are rendered by PHYSICAL eth order (eth1 = the role on physical slot 2,
+    eth2 = the role on slot 3) -- which is swap-driven per seed -- while each interface
+    carries its LOGICAL role's cost. So `eth1` is the waypoint-side link in ~half the
+    seeds and the bypass-side link in the other half: the edited interface's identity
+    no longer predicts the trap/no_op label."""
     p = topo.params
     lo = topo.loopback["src"]
-    eth = [("eth1", f"{topo.ip[('src', 'way')]}/30"),
-           ("eth2", f"{topo.ip[('src', 'alt')]}/30")]
+    way_eth, alt_eth = topo.src_iface["way"], topo.src_iface["alt"]
+    cost_of = {way_eth: cost_way, alt_eth: cost_alt}
+    # eth1 then eth2 in fixed physical order; each maps to whichever role's link it carries.
+    eth_phys = [("eth1", "eth1"), ("eth2", "eth2")]
+    role_of_eth = {way_eth: "way", alt_eth: "alt"}
+    eth = [(e, f"{topo.ip[('src', role_of_eth[e])]}/30") for e, _ in eth_phys]
     body = [_iface_header(topo.name["src"], lo, eth, []), _frr_header(topo.name["src"])]
     body.append(f"interface lo\n ip address {lo}/32\n ip ospf area 0\n!\n")
-    body.append(_ospf_iface("eth1", f"{topo.ip[('src', 'way')]}/30", cost_way))
-    body.append(_ospf_iface("eth2", f"{topo.ip[('src', 'alt')]}/30", cost_alt))
+    for e, _ in eth_phys:
+        body.append(_ospf_iface(e, f"{topo.ip[('src', role_of_eth[e])]}/30", cost_of[e]))
     body.append(f"router ospf\n ospf router-id {lo}\n passive-interface lo\n!\n")
     body.append(f"router bgp {p.core_asn}\n")
     body.append(f" bgp router-id {lo}\n")
@@ -511,14 +533,18 @@ def _description(topo: _Topo) -> str:
     knob, effect = topo.spec.knob, topo.spec.effect
     src = topo.name["src"]
     c = topo.params.costs
+    # The edited LOGICAL role (way-side or alt-side cost) per (knob, effect); the actual
+    # interface name is whichever eth that role's link occupies this seed (swap-driven),
+    # so the named interface carries no trap/no_op tell.
     if knob == "raise_way":
-        iface = "eth1" if effect == "bypass" else "eth2"
+        edited_role = "way" if effect == "bypass" else "alt"
         frm = c.way_pre if effect == "bypass" else c.alt_pre
         to = c.way_raised if effect == "bypass" else c.alt_raised
     else:  # lower_alt
-        iface = "eth2" if effect == "bypass" else "eth1"
+        edited_role = "alt" if effect == "bypass" else "way"
         frm = c.alt_pre if effect == "bypass" else c.way_pre
         to = c.alt_lowered if effect == "bypass" else c.way_lowered
+    iface = topo.src_iface[edited_role]
     return (
         f"On `{src}` (AS{topo.params.core_asn}), change the OSPF interface cost on "
         f"`{iface}` from {frm} to {to} (a one-line `ip ospf cost` edit). See the diff."
@@ -568,9 +594,13 @@ def _scenario_from_spec(spec: IgpMetricSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"igp_metric_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=src,
         patch=patch,

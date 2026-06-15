@@ -135,6 +135,15 @@ AXES = {
 _LP_HIGH = 300
 _LP_CATCHALL = 100
 
+# Route-map clause sequence numbers. The LIVE (way) clause and the inert DECOY clause
+# draw two DISTINCT seqs per seed from this pool (all strictly below the catch-all),
+# randomly assigned to live vs decoy so the edited clause's seq carries no label info.
+# The catch-all is the HIGHEST-of-the-three (so both precede it -> first-match works);
+# the resequence target sits ABOVE the catch-all so the moved clause becomes unreachable.
+_CLAUSE_SEQ_POOL = (5, 8, 11, 14, 17)
+_CATCHALL_SEQ = 20
+_RESEQ_SEQ = 30
+
 
 @dataclass(frozen=True)
 class ClauseFallthroughSpec:
@@ -193,6 +202,8 @@ class _Params:
     rm_name: str             # the shared inbound route-map name
     asl_way: str             # the way-path as-path access-list name
     asl_sentinel: str        # the decoy as-path access-list name
+    live_seq: int            # per-seed route-map seq of the LIVE (way) clause (leak fix)
+    decoy_seq: int           # per-seed route-map seq of the inert decoy clause (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -223,10 +234,22 @@ def _draw_params(seed: int) -> _Params:
     asl_way = f"AS_WAY_{tag}"
     asl_sentinel = f"AS_SENT_{tag}"
 
+    # Per-seed clause-seq assignment (positional-leak fix). The LIVE (way) clause and
+    # the inert DECOY clause take two DISTINCT seqs, both strictly below the catch-all
+    # seq (_CATCHALL_SEQ), randomly assigned so the edited clause's SEQ NUMBER no longer
+    # reveals live (bypass) vs decoy (no_op). FRR first-match only requires both to
+    # precede the catch-all; their mutual order is irrelevant (disjoint as-path matches).
+    seq_a, seq_b = sorted(rng.sample(_CLAUSE_SEQ_POOL, 2))
+    if rng.random() < 0.5:
+        live_seq, decoy_seq = seq_a, seq_b
+    else:
+        live_seq, decoy_seq = seq_b, seq_a
+
     return _Params(
         asn=asn, sentinel_asn=sentinel_asn, loop_block=loop_block,
         link_block=link_block, customer_net=customer_net, name=name,
         rm_name=rm_name, asl_way=asl_way, asl_sentinel=asl_sentinel,
+        live_seq=live_seq, decoy_seq=decoy_seq,
     )
 
 
@@ -334,20 +357,28 @@ def _src_rmap_block(topo: _Topo) -> str:
     # `[way, dst, dst]` (>=2 ASes) so the trailing space always exists; the sentinel
     # list uses the same form for symmetry (it matches nothing because no route in
     # the topology begins with the sentinel ASN).
+    # The LIVE (way) clause and the inert DECOY (sentinel) clause take per-seed seqs
+    # (live_seq / decoy_seq), rendered in ASCENDING seq order; the catch-all is the
+    # highest. WHICH seq is the live clause is randomized per seed, so the edited clause's
+    # seq number no longer reveals live (bypass) vs decoy (no_op). The two discriminators
+    # match DISJOINT as-paths (way vs sentinel), so their mutual order is irrelevant.
+    disc = {
+        p.live_seq: (f"match as-path {p.asl_way}", _LP_HIGH),
+        p.decoy_seq: (f"match as-path {p.asl_sentinel}", _LP_HIGH),
+    }
     lines = [
         f"bgp as-path access-list {p.asl_sentinel} permit ^{p.sentinel_asn} ",
         f"bgp as-path access-list {p.asl_way} permit ^{p.asn['way']} ",
         "!",
-        f"route-map {p.rm_name} permit 5",
-        f" match as-path {p.asl_sentinel}",
-        f" set local-preference {_LP_HIGH}",
-        f"route-map {p.rm_name} permit 10",
-        f" match as-path {p.asl_way}",
-        f" set local-preference {_LP_HIGH}",
-        f"route-map {p.rm_name} permit 20",
-        f" set local-preference {_LP_CATCHALL}",
-        "!",
     ]
+    for seq in sorted(disc):
+        match_line, lp = disc[seq]
+        lines += [f"route-map {p.rm_name} permit {seq}",
+                  f" {match_line}",
+                  f" set local-preference {lp}"]
+    lines += [f"route-map {p.rm_name} permit {_CATCHALL_SEQ}",
+              f" set local-preference {_LP_CATCHALL}",
+              "!"]
     return "\n".join(lines) + "\n"
 
 
@@ -474,25 +505,25 @@ def _apply_change(topo: _Topo) -> str:
     p = topo.params
     before = _src_config(topo)
 
-    live_match = f"match as-path {p.asl_way}"        # clause 10 (way discriminator)
-    decoy_match = f"match as-path {p.asl_sentinel}"  # clause 5  (inert sentinel)
+    live_match = f"match as-path {p.asl_way}"        # the way discriminator (live clause)
+    decoy_match = f"match as-path {p.asl_sentinel}"  # the inert sentinel (decoy clause)
 
     if effect == "bypass":
-        # Touch the LIVE high-LP clause (permit 10) -> way-path first-match moves to
-        # the catch-all (permit 20) -> LP drops to the catch-all tier.
-        target_seq, target_match = 10, live_match
+        # Touch the LIVE high-LP clause (at the per-seed live_seq) -> way-path first-match
+        # moves to the catch-all -> LP drops to the catch-all tier.
+        target_seq, target_match = p.live_seq, live_match
     else:
-        # Touch the INERT decoy clause (permit 5) -> way-path first-match unchanged
-        # (it never matched the decoy) -> empty ground truth.
-        target_seq, target_match = 5, decoy_match
+        # Touch the INERT decoy clause (at the per-seed decoy_seq) -> way-path first-match
+        # unchanged (it never matched the decoy) -> empty ground truth.
+        target_seq, target_match = p.decoy_seq, decoy_match
 
     old_block = _clause_block(p.rm_name, target_seq, target_match, _LP_HIGH)
 
     if edit == "delete":
         # Remove the clause block entirely.
         new_block = ""
-    else:  # resequence: move the SAME clause to permit 30 (below the catch-all 20).
-        new_block = _clause_block(p.rm_name, 30, target_match, _LP_HIGH)
+    else:  # resequence: move the SAME clause ABOVE the catch-all (unreachable for way).
+        new_block = _clause_block(p.rm_name, _RESEQ_SEQ, target_match, _LP_HIGH)
 
     if old_block not in before:
         raise RuntimeError(
@@ -507,11 +538,10 @@ def _apply_change(topo: _Topo) -> str:
         # immediately AFTER the catch-all clause's terminating '!' so it lands below
         # permit 20 in numeric order. We anchor on the catch-all clause + its '!'.
         removed = before.replace(old_block, "", 1)
-        catchall = _clause_block(p.rm_name, 20, "", _LP_CATCHALL)
         # The catch-all has an empty match line -> its block is rendered WITHOUT a
         # match line. Build the real catch-all text (no match) for the anchor.
         catchall = (
-            f"route-map {p.rm_name} permit 20\n"
+            f"route-map {p.rm_name} permit {_CATCHALL_SEQ}\n"
             f" set local-preference {_LP_CATCHALL}\n"
         )
         anchor = catchall + "!\n"
@@ -545,7 +575,9 @@ def _unified(before: str, after: str, node: str) -> str:
 def _description(topo: _Topo) -> str:
     edit, effect = topo.spec.edit, topo.spec.effect
     p = topo.params
-    seq = 10 if effect == "bypass" else 5
+    # the edited clause's seq is the per-seed live_seq (bypass) or decoy_seq (no_op);
+    # WHICH seq is live is randomized per seed, so the named seq carries no label info.
+    seq = p.live_seq if effect == "bypass" else p.decoy_seq
     if edit == "delete":
         return (
             f"On `{topo.name['src']}` (AS{p.asn['src']}), remove clause "
@@ -554,7 +586,8 @@ def _description(topo: _Topo) -> str:
         )
     return (
         f"On `{topo.name['src']}` (AS{p.asn['src']}), re-sequence clause "
-        f"`permit {seq}` of the inbound eBGP route-map `{p.rm_name}` to `permit 30` "
+        f"`permit {seq}` of the inbound eBGP route-map `{p.rm_name}` to "
+        f"`permit {_RESEQ_SEQ}` "
         f"(a clause re-sequence). See the diff."
     )
 
@@ -603,9 +636,13 @@ def _scenario_from_spec(spec: ClauseFallthroughSpec, seed: int) -> Scenario:
     description = _description(topo)
     intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
 
+    node_rng = random.Random(f"clause_fallthrough_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
     return Scenario(
         name=name,
-        nodes=[src, way, alt, dst],
+        nodes=nodes,
         pre_configs=pre,
         change_target=src,
         patch=patch,

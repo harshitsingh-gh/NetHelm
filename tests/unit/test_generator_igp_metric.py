@@ -57,7 +57,11 @@ def test_suite_emits_n_unique_round_tripping_instances():
         post = scn.post_configs()  # raises if the patch does not round-trip
         changed = [n for n in scn.nodes if post[n] != scn.pre_configs[n]]
         assert changed == [scn.change_target], scn.name
-        assert scn.change_target == scn.nodes[0]  # the change is always on src
+        # the change is always on src; src is identified by carrying BOTH OSPF
+        # underlay costs (node-list order is randomized per seed, so we do NOT
+        # assume a fixed index -- the leak fix decorrelates position from role).
+        costs = _ospf_costs_per_iface(scn.pre_configs[scn.change_target])
+        assert set(costs) == {"eth1", "eth2"}, (scn.name, costs)
 
 
 def test_suite_larger_than_combo_count_wraps_with_unique_ids():
@@ -121,14 +125,18 @@ def test_egress_uses_routemap_nexthop_not_bare_next_hop_self():
     """Batfish treats bare `next-hop-self` as a no-op for eBGP-learned routes, so the
     egress next-hop MUST be rewritten via the honored `set ip next-hop <lo>` form."""
     scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass"))
-    way = scn.nodes[1]
+    # the waypoint `way` is exposed ONLY via waypoint_intents (NOT a fixed node index,
+    # since the leak fix randomizes node order + the way/alt physical slot per seed).
+    way = scn.waypoint_intents[0][2]
     cfg = scn.pre_configs[way]
     assert "set ip next-hop" in cfg
     assert "next-hop-self" not in cfg, "must not rely on bare next-hop-self"
 
 
 def _ospf_costs_per_iface(src_cfg: str) -> dict[str, int]:
-    """Parse src's PRE config into {iface: ospf_cost}. eth1=way side, eth2=alt side."""
+    """Parse src's PRE config into {iface: ospf_cost}. WHICH eth is the way side vs the
+    alt side is randomized per seed (the positional-leak fix), so callers must NOT
+    assume eth1=way; identify the way side as the cheaper PRE cost."""
     out: dict[str, int] = {}
     cur: str | None = None
     for raw in src_cfg.splitlines():
@@ -142,15 +150,18 @@ def _ospf_costs_per_iface(src_cfg: str) -> dict[str, int]:
 
 def test_ibgp_over_loopbacks_and_strict_cost_gap():
     # The costs are drawn per-seed (contamination control), so we parse them and assert
-    # the STRICT gap invariant, never a literal value (no hardcoded fingerprint).
+    # the STRICT gap invariant, never a literal value (no hardcoded fingerprint). The
+    # leak fix randomizes WHICH eth carries the waypoint side, so we assert the gap on
+    # the EDITED-role invariant (a strict, non-equal gap exists), NOT on a fixed index.
     scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass"))
-    src_cfg = scn.pre_configs[scn.nodes[0]]
+    src_cfg = scn.pre_configs[scn.change_target]
     assert "update-source lo" in src_cfg                # iBGP over loopbacks
     costs = _ospf_costs_per_iface(src_cfg)
-    # exactly the two underlay interfaces carry an ospf cost (eth1=way, eth2=alt)
+    # exactly the two underlay interfaces carry an ospf cost (one is the waypoint side,
+    # the other the bypass side; WHICH eth is which is swap-driven per seed).
     assert set(costs) == {"eth1", "eth2"}, costs
-    # baseline: way side (eth1) STRICTLY cheaper than alt side (eth2) so way wins PRE
-    assert costs["eth1"] < costs["eth2"], costs
+    # baseline is a STRICT (non-equal) gap so exactly one side wins PRE (no ECMP/D5).
+    assert costs["eth1"] != costs["eth2"], costs
 
 
 def _patch_cost_edit(patch: str) -> tuple[int, int]:
@@ -169,20 +180,23 @@ def _patch_cost_edit(patch: str) -> tuple[int, int]:
 
 def test_two_knobs_edit_two_distinct_interfaces():
     # Costs are per-seed; assert INVARIANTS (raise/lower direction + crossing the PRE
-    # gap + distinct edited interfaces), never literal values.
+    # gap + distinct edited interfaces), never literal values. The leak fix randomizes
+    # WHICH eth carries the waypoint side, so we identify the way side as the strictly
+    # CHEAPER PRE cost (way wins PRE) and the alt side as the dearer -- by VALUE, not by
+    # a fixed eth index.
     rw_scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("raise_way", "bypass"))
     la_scn = g.generate_igp_metric_instance(0, spec=g.IgpMetricSpec("lower_alt", "bypass"))
-    # The PRE alt/way costs from the (shared seed) src config.
-    pre = _ospf_costs_per_iface(rw_scn.pre_configs[rw_scn.nodes[0]])
-    way_pre, alt_pre = pre["eth1"], pre["eth2"]
+    pre = _ospf_costs_per_iface(rw_scn.pre_configs[rw_scn.change_target])
+    way_pre, alt_pre = min(pre.values()), max(pre.values())   # way wins PRE (strict gap)
+    assert way_pre < alt_pre, pre
 
     rw_removed, rw_added = _patch_cost_edit(rw_scn.patch)
     la_removed, la_added = _patch_cost_edit(la_scn.patch)
 
-    # raise_way is a RAISE that crosses ABOVE the PRE alt cost (so alt now wins).
+    # raise_way is a RAISE of the WAY-side cost that crosses ABOVE the PRE alt cost.
     assert rw_added > rw_removed, ("raise_way must raise", rw_removed, rw_added)
     assert rw_removed == way_pre and rw_added > alt_pre, (rw_removed, rw_added, way_pre, alt_pre)
-    # lower_alt is a LOWER that drops BELOW the PRE way cost (so alt now wins).
+    # lower_alt is a LOWER of the ALT-side cost that drops BELOW the PRE way cost.
     assert la_added < la_removed, ("lower_alt must lower", la_removed, la_added)
     assert la_removed == alt_pre and la_added < way_pre, (la_removed, la_added, alt_pre, way_pre)
     # The two edits touch DIFFERENT interfaces: their removed (pre) costs differ.
@@ -213,21 +227,23 @@ def test_noop_change_is_a_real_one_line_edit_not_empty():
 @pytest.mark.parametrize("spec", g.enumerate_specs())
 def test_waypoint_and_intent_wired(spec):
     scn = g.generate_igp_metric_instance(11, spec=spec)
-    src, way = scn.nodes[0], scn.nodes[1]
-    # D4
+    # src/way are exposed ONLY via the intent channels (NOT by fixed node positions; the
+    # leak fix randomizes node order + the way/alt physical slot). src is the change
+    # target; the waypoint is the inspection node named in waypoint_intents.
     assert len(scn.waypoint_intents) == 1
     wsrc, wdst, wwp = scn.waypoint_intents[0]
-    assert wsrc == src and wwp == way and wdst.endswith("/32")
+    assert wsrc == scn.change_target and wwp != wsrc and wdst.endswith("/32")
+    assert wwp in scn.nodes
     # D10: a matching kind="waypoint" invariant so the intent dimension fires too
     assert len(scn.intent_invariants) == 1
     inv = scn.intent_invariants[0]
-    assert inv.kind == "waypoint" and inv.src == src and inv.waypoint == way
+    assert inv.kind == "waypoint" and inv.src == wsrc and inv.waypoint == wwp
     assert inv.dst == wdst
     # D2 watch set: 3 core loopbacks + the customer /24
     assert sum(1 for p in scn.watched_prefixes if p.endswith("/32")) == 3
     assert any(not p.endswith("/32") for p in scn.watched_prefixes)
     # D3 reachability probe present
-    assert scn.reachability_flows and scn.reachability_flows[0][0] == src
+    assert scn.reachability_flows and scn.reachability_flows[0][0] == wsrc
 
 
 @pytest.mark.parametrize("spec", g.enumerate_specs())

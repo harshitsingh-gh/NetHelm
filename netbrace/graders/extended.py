@@ -43,6 +43,14 @@ class ExtendedScoreRecord(BaseModel):
     valid_prediction: bool = True
     is_trap: bool = False
     false_alarm: bool = False
+    # CALIBRATION-TWIN false alarm, surfaced INDEPENDENT of is_trap. Fires on ANY
+    # empty-truth instance (truth_empty) with a non-empty prediction. The legacy
+    # ``false_alarm`` gates on ``is_trap and truth_empty``, which can NEVER fire on the
+    # no_op calibration twins (is_trap=False) — that made the no_op false-alarm signal a
+    # DEAD CHANNEL and the no_op FAR uncomputable. This additive field (default False,
+    # backward-compatible) restores it: it is the FP signal of the bypass-vs-no_op
+    # detector's no_op arm. See reporting.sweep_aggregate.reroute_detection_scores.
+    empty_truth_false_alarm: bool = False
     # The documented LLM failure: predicting a BGP session loss (D1) when sessions
     # actually stay up. Fires whenever truth sessions=∅ but the model predicts any
     # session loss — independent of whether OTHER dimensions fire (so it works on
@@ -102,6 +110,9 @@ def grade_extended(
     truth_empty = ground_truth.is_empty()
     pred_empty = prediction.is_empty()
     false_alarm = is_trap and truth_empty and not pred_empty
+    # is_trap-INDEPENDENT calibration-twin false alarm: any empty-truth instance with a
+    # non-empty prediction. This is what makes the no_op (is_trap=False) FAR computable.
+    empty_truth_false_alarm = truth_empty and not pred_empty
     # Per-dimension trap signal: the model hallucinated a session loss that did not
     # happen. Independent of is_trap and of other dimensions.
     false_session_alarm = (not truth_keys["sessions"]) and bool(pred_keys["sessions"])
@@ -122,6 +133,7 @@ def grade_extended(
         valid_prediction=True,
         is_trap=is_trap,
         false_alarm=false_alarm,
+        empty_truth_false_alarm=empty_truth_false_alarm,
         false_session_alarm=false_session_alarm,
         per_type=per_type,
         macro_f1=macro,

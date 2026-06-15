@@ -166,6 +166,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
 from netbrace.topology.patches import apply_unified_diff
 
 # --------------------------------------------------------------------------- #
@@ -301,6 +302,7 @@ class _Params:
     area1: int               # the non-backbone area id (src side); backbone is 0
     name: dict[str, str]     # role -> randomized node name string
     costs: _SummaryCosts     # randomized strict-gap OSPF summary-cost constants
+    swap: bool               # per-seed: exchange the wabr<->babr PHYSICAL slot (leak fix)
 
 
 def _draw_params(seed: int) -> _Params:
@@ -324,9 +326,14 @@ def _draw_params(seed: int) -> _Params:
 
     costs = _draw_summary_costs(rng)
 
+    # Per-seed ROLE->POSITION swap (positional-leak fix): drawn LAST so addressing is
+    # byte-stable; decides which PHYSICAL slot the waypoint ABR `wabr` vs the bypass
+    # ABR `babr` occupies (loopback octet, name suffix, link-IP carving, node order).
+    swap = _rp.draw_swap(rng)
+
     return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
                    link_block=link_block, customer_net=customer_net, area1=area1,
-                   name=name, costs=costs)
+                   name=name, costs=costs, swap=swap)
 
 
 # --------------------------------------------------------------------------- #
@@ -347,8 +354,10 @@ class _Topo:
 
 
 def _build_topo(spec: IgpSummarySpec, params: _Params) -> _Topo:
-    name = dict(params.name)
-    rid_index = {"src": 1, "wabr": 2, "babr": 3, "eg": 4, "dst": 5}
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "wabr": 2, "babr": 3, "eg": 4, "dst": 5}, params.swap,
+        ("wabr", "babr"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("wabr", "babr"))
     loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
 
     b, c0, c1 = params.link_block
@@ -356,17 +365,17 @@ def _build_topo(spec: IgpSummarySpec, params: _Params) -> _Topo:
     def addr(off: int) -> str:
         return f"{b}.{c0}.{c1}.{off}"
 
-    # /30 link supernets carved from the link block:
-    #   src-wabr  base .0  (src=.1,  wabr=.2)   OSPF area1
-    #   src-babr  base .4  (src=.5,  babr=.6)   OSPF area1
-    #   wabr-eg   base .8  (wabr=.9, eg=.10)    OSPF area0
-    #   babr-eg   base .12 (babr=.13, eg=.14)   OSPF area0
-    #   eg-dst    base .16 (eg=.17,  dst=.18)   eBGP (no OSPF)
+    # /30 link supernets carved by the (swapped) physical slot: the ABR role on slot 2
+    # (loopback .2) takes src-iface eth1 link (base .0) + eg-link base .8; the slot-3
+    # ABR takes base .4 + base .12. So the WAYPOINT ABR's loopback octet, name suffix
+    # and link IPs move per seed -- the edited ABR's identity carries no label info.
+    lo_abr = "wabr" if rid_index["wabr"] == 2 else "babr"   # ABR on physical slot 2
+    hi_abr = "babr" if lo_abr == "wabr" else "wabr"         # ABR on physical slot 3
     ip: dict[tuple[str, str], str] = {
-        ("src", "wabr"): addr(1), ("wabr", "src"): addr(2),
-        ("src", "babr"): addr(5), ("babr", "src"): addr(6),
-        ("wabr", "eg"): addr(9), ("eg", "wabr"): addr(10),
-        ("babr", "eg"): addr(13), ("eg", "babr"): addr(14),
+        ("src", lo_abr): addr(1), (lo_abr, "src"): addr(2),
+        ("src", hi_abr): addr(5), (hi_abr, "src"): addr(6),
+        (lo_abr, "eg"): addr(9), ("eg", lo_abr): addr(10),
+        (hi_abr, "eg"): addr(13), ("eg", hi_abr): addr(14),
         ("eg", "dst"): addr(17), ("dst", "eg"): addr(18),
     }
 
@@ -672,11 +681,12 @@ def _scenario_from_spec(spec: IgpSummarySpec, seed: int) -> Scenario:
         )
     ]
 
-    # Node list: the EDITED ABR first (change_target == nodes[0]), then the rest in a
-    # fixed topology order. The waypoint is always `wabr` (exposed via waypoint_intents
-    # / intent_invariants, not by node position, since the edited ABR varies by combo).
-    rest = [n for n in (src, wabr, babr, eg, dst) if n != change_node]
-    nodes = [change_node] + rest
+    # Node-list order is randomized per seed (a fresh deterministic stream) so the
+    # change_target's INDEX carries no role/label info. The waypoint ABR `wabr` is
+    # exposed ONLY via waypoint_intents / intent_invariants.
+    node_rng = random.Random(f"igp_summary_nodes_{seed}")
+    nodes = [src, wabr, babr, eg, dst]
+    node_rng.shuffle(nodes)
 
     name = f"gen_igp_summary_{spec.dims_label()}_s{seed}"
     description = _description(topo)
