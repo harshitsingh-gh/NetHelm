@@ -1,4 +1,18 @@
-r"""Family-2 generator — ORIGIN-CODE TIEBREAK FLIP (the `origin_code` mechanism): a
+r"""Family-2 generator — ORIGIN-CODE TIEBREAK FLIP (the `origin_code` mechanism).
+
+⚠️ HELD OUT of the NetBrace-Detect HEADLINE (run_sweep.REROUTE_DIFFSHAPE_LEAKY), scored only
+in the reroute_detect_all13 diagnostic. The mechanism + oracle ground truth are VALID
+(bypass -> {D4 waypoint, D10 intent}, no_op -> empty, 10x-deterministic), and the bypass/no_op
+CHANGED +/- LINES are identical — BUT the bypass edits the customer route-map clause and the
+no_op edits an inert decoy clause at a DIFFERENT position, so the full unified-diff hunk
+GEOMETRY is asymmetric (bypass = 1 hunk / 18 lines, no_op = 2 hunks / 20 lines). A zero-reasoning
+probe on the hunk count separates the twins at balanced-accuracy 1.0 (gate-3 finding, 2026-06-16),
+so the family cannot be a diff-shape-identical calibration twin for the scored headline. A future
+generator rewrite (single edit locus, position-balanced clauses) could make it headline-eligible;
+until then it is a diagnostic-only family. Where the text below says the diff is
+"shape-/byte-identical", read that as the CHANGED LINES only, not the hunk geometry.
+
+ORIGIN-CODE TIEBREAK FLIP: a
 DUAL-ORIGIN customer prefix whose two copies reach `src` tied on LOCAL_PREF and
 AS_PATH length, so the BGP best-path decision falls to the ORIGIN step (RFC 4271
 §9.1.2.2 (b): lowest Origin number wins — IGP < EGP < INCOMPLETE). The decisive change
@@ -68,8 +82,11 @@ ORIGIN. The two paths differ ONLY in ORIGIN code (b) and in a latent MED (c):
     EXACTLY where it was PRE. Step (b) is unchanged, the best path stays on `way`, and
     ground truth is COMPLETELY EMPTY. The no_op diff therefore NAMES the customer prefix
     (its prefix-list / route-map lines) exactly as the bypass does — the two twins are
-    construction-parallel AND diff-shape-identical; only reading the `set origin` value
-    against the PRE origin (real routing reasoning) tells them apart. (This closes the
+    construction-parallel and identical in their CHANGED +/- LINES; only reading the
+    `set origin` value against the PRE origin (real routing reasoning) tells them apart.
+    (HELD OUT of the scored headline — see the HELD-OUT note at the top of this docstring:
+    the full unified-diff hunk GEOMETRY is asymmetric even though the changed lines match.)
+    (This also closes the
     audit-M3 gameability tell, where the OLD no_op edited the OWN loopback /32 and never
     mentioned the customer prefix, so a purely syntactic "does the patch mention the
     customer prefix?" heuristic separated trap from calibration with ZERO routing
@@ -164,11 +181,14 @@ Structural axes (each a genuinely distinct config-reading task or a calibration 
         SAME egress, but the rewritten `set origin` value EQUALS the PRE value so the
         customer copy's ORIGIN code is unchanged — the best path stays on `way`. Ground
         truth is COMPLETELY EMPTY across ALL dimensions. CRITICALLY the no_op diff is
-        SHAPE-IDENTICAL to the bypass (same prefix-list + `set origin` +/- lines) and NAMES
-        the customer prefix exactly as the bypass does, so neither a syntactic "does the
-        patch touch the customer prefix?" heuristic NOR a diff-shape probe can separate
-        trap from calibration. Only reading the `set origin` value and reasoning whether it
-        lands where it was PRE separates them — genuine best-path reasoning.
+        identical to the bypass in its CHANGED +/- LINES (same prefix-list + `set origin`
+        lines) and NAMES the customer prefix exactly as the bypass does, so neither a
+        syntactic "does the patch touch the customer prefix?" heuristic NOR a changed-LINE
+        diff-shape probe can separate trap from calibration. Only reading the `set origin`
+        value and reasoning whether it lands where it was PRE separates them — genuine
+        best-path reasoning. (BUT the full unified-diff HUNK GEOMETRY differs — bypass and
+        no_op edit clauses at different positions, so origin_code is HELD OUT of the scored
+        headline; see the HELD-OUT note at the top.)
 
 That is 2 knobs × 2 effects = 4 structural combos × seeds.
 

@@ -144,14 +144,17 @@ def resolve_temperature(model: str, override: float | None) -> float | None:
 
 _REROUTE_PREFIXES = tuple(p for (_m, _f, p) in scenarios.REROUTE_GENERATORS)
 
-# Families held OUT of the NetBrace-Detect HEADLINE because a zero-reasoning mechanical
-# probe separates their bypass/no_op twins. As of the 2026-06-15 leak-fix-2 round, ALL 13
-# families are leak-free at production scale (best single-feature probe <= floor AND <=
-# permutation-null p99 — codified by tests/unit/test_reroute_probe_leak.py and
-# oracle-re-verified in runs/oracle_verify_leakfix2_20260615/), so the set is EMPTY and
-# every family is in the headline. Re-add a family here only if the probe guard catches a
-# regression; the `reroute_detect_all13` diagnostic is then the all-13 cross-check.
-REROUTE_DIFFSHAPE_LEAKY = frozenset()
+# Families HELD OUT of the NetBrace-Detect HEADLINE because a zero-reasoning mechanical probe
+# separates their bypass/no_op twins (they remain scored in the reroute_detect_all13
+# diagnostic). origin_code is held out: its ORIGIN tiebreak edits DIFFERENT route-map clauses
+# (the customer clause for the bypass, an inert decoy clause for the no_op) at different
+# positions, so its unified-diff GEOMETRY is asymmetric (bypass = 1 hunk / 18 lines, no_op =
+# 2 hunks / 20 lines) — a single-feature probe on n_hunks separates it at 1.0 (the gate-3
+# finding; the +/- changed lines ARE symmetric, the hunk structure is not). The other 12
+# families are verified leak-free under single AND 2-feature probes INCLUDING diff-geometry
+# (n_hunks, n_total_lines) by tests/unit/test_reroute_probe_leak.py. A future symmetrization
+# of origin_code's generator (single edit locus, position-balanced) would remove it here.
+REROUTE_DIFFSHAPE_LEAKY = frozenset({"origin_code"})
 
 
 def _is_reroute_instance(instance_id: str) -> bool:
@@ -1134,10 +1137,11 @@ def render_table(summary: dict, models: list[str], splits: list[str]) -> str:
                        "no_op_FAR = false-alarm rate on the diff-shape-identical no_op "
                        "calibration twins. THIS is the reroute headline — macro_f1_damage "
                        "is gameable for this split (it drops the no_op twins). Headline is "
-                       "MACRO-averaged over all 13 leak-free families (equal family weight; "
-                       "each verified <= permutation-null p99 against a single-feature probe, "
-                       "test_reroute_probe_leak.py); reroute_detect_all13 mirrors it as a "
-                       "cross-check. Grader: grade_keysets_semantic (reroute instances) "
+                       "MACRO-averaged over the 12 leak-free families (equal family weight; "
+                       "each verified <= permutation-null p99 against single, 2-feature AND "
+                       "diff-geometry probes, test_reroute_probe_leak.py); origin_code is "
+                       "HELD OUT (asymmetric diff hunk-geometry) and scored only in "
+                       "reroute_detect_all13. Grader: grade_keysets_semantic (reroute instances) "
                        "— D4/D10 truth is hidden /32 probes; config-visible prefix credit "
                        "is required for a valid score. Provenance: manifest[grader_routing].")
             out.append("")

@@ -120,6 +120,12 @@ def _features(scn) -> dict:
     # origin_code PRE-fix (shape x literal) diagonal as a single-feature separator (1.0).
     f["n_plus_chars"] = sum(len(_norm_line(l)) for l in plus)
     f["n_minus_chars"] = sum(len(_norm_line(l)) for l in minus)
+    # FULL-PATCH GEOMETRY — the surface the +/- changed-line features are BLIND to. The
+    # unified-diff HUNK COUNT and total patch line count: origin_code's bypass (1 hunk, 18
+    # lines) vs no_op (2 hunks, 20 lines) leak lives HERE (the gate-3 relocation), not in
+    # the changed lines. The other 12 families have label-uncorrelated geometry across twins.
+    f["n_hunks"] = scn.patch.count("@@ -")
+    f["n_total_lines"] = len(scn.patch.splitlines())
     # prefix mask lengths present in the changed lines
     masks = re.findall(r"/(\d+)", txt)
     for m in ("24", "25", "26", "30"):
@@ -174,7 +180,7 @@ _SCALAR = [
     "has_24", "has_25", "has_26", "has_30", "max_mask", "min_mask", "edited_octet",
     "ct_index", "ct_name_suffix", "has_summary_only", "has_set_origin", "added_origin",
     "removed_origin", "comm_bucket", "added24_oct1", "added_prepend_n", "removed_prepend_n",
-    "prepend_delta",
+    "prepend_delta", "n_hunks", "n_total_lines",
 ]
 
 
@@ -293,6 +299,15 @@ def _perm_null_p99(items, fitfn, n_perm: int = 300, seed: int = 12345) -> float:
 _FAMILY_IDS = [p for (_s, _f, p) in _GENS]
 
 
+def _held_out() -> frozenset:
+    """Families HELD OUT of the scored headline (run_sweep.REROUTE_DIFFSHAPE_LEAKY). Their
+    surface leak does not affect the headline metric; they are reported only in the
+    reroute_detect_all13 diagnostic. The leak-free invariant is asserted for HEADLINE
+    families only; held-out families are exempt (and confirmed leaky below)."""
+    from scripts.run_sweep import REROUTE_DIFFSHAPE_LEAKY
+    return REROUTE_DIFFSHAPE_LEAKY
+
+
 @pytest.mark.parametrize("idx", range(len(_GENS)), ids=_FAMILY_IDS)
 @pytest.mark.parametrize("each", _EACH, ids=[f"n{n}" for n in _EACH])
 def test_no_single_feature_label_leak(idx, each):
@@ -300,6 +315,8 @@ def test_no_single_feature_label_leak(idx, each):
     feature must NOT separate bypass from no_op above chance (held-out balanced accuracy must
     not exceed the 0.65 floor AND must not exceed the permutation-null p99)."""
     suite, prefix = _family_suite(idx, each)
+    if prefix[len("gen_"):].rstrip("_") in _held_out():
+        pytest.skip(f"{prefix} is held out of the scored headline (REROUTE_DIFFSHAPE_LEAKY)")
     n_trap = sum(1 for s in suite if s.is_trap)
     assert abs(n_trap - (len(suite) - n_trap)) <= 1, (prefix, "suite not ~balanced")
 
@@ -325,6 +342,8 @@ def test_no_two_feature_label_leak(idx, each):
     so a real diagonal separator FAILS while finite-sample 2-feature noise (inside the null)
     PASSES."""
     suite, prefix = _family_suite(idx, each)
+    if prefix[len("gen_"):].rstrip("_") in _held_out():
+        pytest.skip(f"{prefix} is held out of the scored headline (REROUTE_DIFFSHAPE_LEAKY)")
     items = [(_features(s), bool(s.is_trap)) for s in suite]
     obs = _crossfit_pair(items)
     null = _perm_null_p99(items, _crossfit_pair)
@@ -335,6 +354,27 @@ def test_no_two_feature_label_leak(idx, each):
         f"zero-reasoning XOR-of-two probe recovers the bypass/no_op label from a diagonal "
         f"joint of two diff/config features (the origin_code shape x set-origin escape class)."
     )
+
+
+def test_origin_code_geometry_leaks_and_is_held_out():
+    """origin_code's ORIGIN tiebreak edits DIFFERENT route-map clauses (the customer clause
+    for the bypass; an inert decoy clause for the no_op) at different positions, so its
+    bypass/no_op diffs have asymmetric unified-diff geometry (1 vs 2 hunks, 18 vs 20 lines) —
+    it CANNOT be the diff-shape-identical calibration twin the headline requires. It is
+    therefore HELD OUT of the scored headline (REROUTE_DIFFSHAPE_LEAKY) and reported only in
+    the reroute_detect_all13 diagnostic. This pins BOTH facts: the geometry leak is real, and
+    the family is held out so the leak never reaches the headline metric. (A future
+    symmetrization of the generator could let it rejoin the headline — then this test flips.)"""
+    assert "origin_code" in _held_out(), \
+        "origin_code MUST be in REROUTE_DIFFSHAPE_LEAKY (its diff geometry leaks the label)"
+    idx = _FAMILY_IDS.index("gen_origin_code_")
+    suite, _ = _family_suite(idx, 40)
+    items = [(_features(s), bool(s.is_trap)) for s in suite]
+    obs = _crossfit_single(items)
+    assert obs > 0.9, (
+        f"the origin_code diff-geometry leak should be a strong single-feature separator "
+        f"(n_hunks / n_total_lines); measured {obs:.3f}. If this drops, the generator may "
+        f"have become symmetric and the family could rejoin the headline.")
 
 
 def test_single_probe_fires_on_a_planted_leak():

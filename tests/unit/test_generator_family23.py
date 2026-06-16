@@ -201,10 +201,14 @@ def test_origin_code_both_twins_name_customer_prefix():
 
 
 def test_origin_code_twins_are_diff_shape_identical_set_origin_clause_decides():
-    """2-FEATURE-LEAK FIX (the (diff-SHAPE x set-origin-literal) diagonal, 2026-06-16): the
-    bypass and no_op twins of a given KNOB now produce a BYTE-IDENTICAL diff (a CUST_PL seq
-    renumber + the SAME flipped `set origin` token), so NO single feature AND NO 2-feature
-    XOR of the diff text separates trap from calibration. The ONLY difference is WHICH
+    """origin_code twins: CHANGED-LINE symmetry (HELD OUT of the headline for hunk geometry).
+    The bypass and no_op twins of a given KNOB produce byte-identical CHANGED +/- LINES (a
+    CUST_PL seq renumber + the SAME flipped `set origin` token), so no single-feature AND no
+    2-feature XOR of the CHANGED LINES separates trap from calibration. HOWEVER the full
+    unified-diff hunk GEOMETRY differs (bypass 1 hunk, no_op 2 hunks — the no_op edits the decoy
+    clause farther from the renumber), which is why origin_code is HELD OUT of the scored
+    headline (run_sweep.REROUTE_DIFFSHAPE_LEAKY; test_reroute_probe_leak.py). The ONLY routing
+    difference is WHICH
     route-map clause the rewritten origin governs:
       * bypass edits CLAUSE 10 (the customer /24 clause, matched by CUST_PL) -> the customer
         copy's ORIGIN flips -> ORIGIN tie collapses -> latent MED decides -> reroute;
@@ -224,8 +228,12 @@ def test_origin_code_twins_are_diff_shape_identical_set_origin_clause_decides():
         for pm, eff in ((pm_b, "bypass"), (pm_n, "no_op")):
             assert any("set origin" in l for l in pm), (knob, eff, "no set origin in diff")
             assert any("CUST_PL" in l and "/24" in l for l in pm), (knob, eff, "no CUST_PL /24")
-        # (b) the DIFF TEXT is byte-identical between the twins (the symmetrization).
-        assert pm_b == pm_n, (knob, "bypass and no_op diffs are NOT shape-identical", pm_b, pm_n)
+        # (b) the CHANGED +/- LINES are byte-identical between the twins (line-level symmetry).
+        assert pm_b == pm_n, (knob, "bypass and no_op CHANGED LINES are NOT identical", pm_b, pm_n)
+        # (b') BUT the full unified-diff hunk GEOMETRY is asymmetric — the reason origin_code is
+        #      HELD OUT of the headline (bypass = 1 hunk, no_op = 2 hunks).
+        assert bypass.patch.count("@@ -") != no_op.patch.count("@@ -"), (
+            knob, "expected asymmetric hunk geometry (the held-out reason)")
         # (c) the flipped `set origin` token is the SAME for both effects (== flip of PRE);
         #     the token therefore carries NO label info -- only the clause does.
         pre = "igp" if knob == "way_to_incomplete" else "incomplete"
