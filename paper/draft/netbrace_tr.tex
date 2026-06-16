@@ -75,8 +75,13 @@ incidents also produce. We additionally show
 that naive exact-string set grading would have reported a uniform 0.00 on
 forwarding anomalies for every model---a granularity artifact, not a
 capability fact---and release both graders with a frozen semantic-matching
-specification. The benchmark, oracle pipeline, and run artifacts will be
-released.
+specification. To test whether the quiet-half blind spot is one mechanism or a
+capability axis, we also build and release a frozen 13-family quiet-reroute
+suite with diff-shape-identical no-op calibration twins, scored by a
+balanced-accuracy detection metric (\netbrace{}-Detect) that pins any
+label-independent predictor to chance; its full-fleet evaluation is the gated
+next measurement, not a result claimed here. The benchmark, oracle pipeline, and
+run artifacts will be released.
 \end{abstract}
 
 \section{Introduction}
@@ -279,7 +284,10 @@ the change harms. For forwarding anomalies, \texttt{blackhole} and
 conflates them); \texttt{loop} stays distinct. The canonicalization is the
 identity on dimensions whose truth is already config-visible (D1, D2, D8, D9)
 whenever every such truth key is literally rendered in the prompt, which we
-verify by audit holds for all 59 benchmark instances---and it leaves every
+verify by audit holds for all 59 evaluated instances (the 11 grounded and 48
+legacy-templated instances run in this report; the frozen quiet-reroute suite of
+\S\ref{sec:templated} carries hidden-probe truth and is scored under the semantic
+grader)---and it leaves every
 model-free floor at chance: the
 largest floor movement under it is the syntactic-diff floor's
 0.007$\to$0.023 (templated), with all floors remaining $\leq$0.02 grounded
@@ -291,6 +299,24 @@ Two flags are tracked independently: \emph{false session alarm}
 failure is never conflated with reasoning failure). Parsing is tolerant
 (last JSON object in the response; missing keys are empty lists; malformed
 elements are dropped).
+
+\paragraph{Detection metric for the quiet-reroute suite.} The frozen
+quiet-reroute suite (\S\ref{sec:templated}) is scored as a \emph{detection}
+problem rather than by per-dimension F1, because its instances come in matched
+bypass/no-op pairs. \netbrace{}-Detect
+$=(\textit{trap\_recall}+(1-\textit{no\_op\_FAR}))/2$ is the balanced accuracy of
+the implied bypass-vs-no-op detector: the mean of the recall on bypass instances
+(did the model report the $\{$D4, D10$\}$ waypoint/intent damage?) and one minus
+the false-alarm rate on the diff-shape-identical no-op twins (did it stay silent
+on the inert change?). The equivalent Youden's~J form is
+$J=\textit{trap\_recall}-\textit{no\_op\_FAR}$ (\S\ref{sec:related}). Because a
+bypass and its twin are diff-shape-identical, any constant or label-independent
+predictor---including ``always predict $\{$D4, D10$\}$'' and any surface-token or
+diff-geometry probe---scores exactly 0.50 ($J=0$) by construction, so the metric
+cannot be farmed without genuinely separating damaging from inert changes. The
+reroute D4/D10 truth is carried as hidden probe /32s, so this suite is scored
+under the semantic grader only (a /24-naming reasoner must score near 1.0, not be
+penalized to chance by an exact-string grader; \S\ref{sec:graderfinding}).
 
 \paragraph{Why naive set grading fails here.}
 \label{sec:graderfinding}
@@ -362,10 +388,11 @@ output. \emph{waypoint4}/\emph{ecmp4} are BGP-free static-routed anchors.}
 \label{tab:scenarios}
 \end{table}
 
-\subsection{Templated split: 48 generator instances}
+\subsection{Templated suites: mechanism backbone and the quiet-reroute generalization suite}
 \label{sec:templated}
 
-Four parameterized generators convert verified mechanisms into structurally
+\paragraph{Legacy mechanism backbone (48 templated instances).} Four parameterized
+generators convert verified mechanisms into structurally
 distinct instances: \emph{silent withdrawal} (fan-out $k\in\{2,3,4\}$;
 one-vs-all peers filtered; in/outbound; plain/static/aggregate prefix
 backing; implicit-deny vs explicit-deny vs off-by-one prefix-list
@@ -378,9 +405,46 @@ by construction---calibration traps), and \emph{de-aggregation overflow}
 re-randomizes ASNs (random private 4-byte), addressing, node names, and the
 customer prefix per seed, so instances cannot be answered by recall of
 public configurations; topology identifiers shown to the model are
-content-free hashes. The split serves as the statistical backbone (real $N$
+content-free hashes. This suite serves as the statistical backbone (real $N$
 per dimension) and the contamination control: a per-class memorizer floor
 (\S\ref{sec:floors}) directly tests whether template recognition suffices.
+The six-instance leak-reroute probe whose result heads \S\ref{sec:results}~(F3)
+is the \emph{reroute} variant of this suite's more-specific-leak generator---one
+mechanism, six seed/scope variants.
+
+\paragraph{Quiet-reroute generalization suite (frozen; 13 families).} To test
+whether that headline loud/quiet split is a property of \emph{one} mechanism or
+a capability axis (\S\ref{sec:limitations}), we built and froze a second
+templated suite of thirteen \emph{structurally distinct} quiet-reroute generator
+families: route-reflector best-path hiding, community-driven LOCAL\_PREF
+steering and community-triggered remote action, AS-path prepend steering and
+load-bearing-prepend cleanup, MED-driven reroute, IGP hot-potato metric and OSPF
+summary-cost next-hop shifts, aggregate/summary collapse that hides a
+traffic-engineering specific, next-hop-self elimination, redistribution
+administrative-distance shadowing, route-map clause fall-through, and an
+origin-code tiebreak---spanning the LOCAL\_PREF-steering, AS-path-manipulation,
+and aggregate-masking mechanism classes the headline result leaves open. Each
+family emits a matched \emph{pair}: a \textbf{bypass} instance whose change
+silently violates the origin-transit waypoint (ground truth $\{$D4, D10$\}$) and
+a \emph{diff-shape-identical} \textbf{no-op} calibration twin whose change is
+inert (empty ground truth). The twin is what makes the suite scoreable by
+\netbrace{}-Detect (\S\ref{sec:grading}): because a bypass diff and its no-op
+twin are structurally indistinguishable, no surface-token or diff-geometry
+heuristic can separate them, and every label-independent predictor is pinned to
+0.50. Twelve families form the scored headline (48 reroute instances: 24 bypass
+$+$ 24 no-op); the origin-code family is held \emph{out} of the scored set---its
+tiebreak edits route-map clauses at asymmetric positions, so its diff geometry
+cannot be made twin-identical without a generator rewrite---and retained as a
+four-instance diagnostic (a hold-out fixed by the generator geometry in the
+frozen build manifest before any model call, not a post-hoc selection), for 52
+reroute instances in all. The suite re-randomizes
+identifiers per seed, is digest-pinned and determinism-gated like the grounded
+split, passes a label-leak probe confirming the bypass and no-op twins are
+indistinguishable to single-feature, two-feature, and diff-geometry heuristics,
+and is frozen in a released build manifest. Its full-fleet
+\netbrace{}-Detect evaluation is the immediate, validation-gated next measurement
+(\S\ref{sec:setup}, \S\ref{sec:limitations}), \emph{not} a result claimed in
+this report.
 
 \subsection{Model-free floors}
 \label{sec:floors}
@@ -422,11 +486,14 @@ leak-lint pass, before any paid call; the contract requires one JSON object
 with one key per dimension).
 
 \paragraph{Protocol.} $N{=}5$ samples per (instance, model). All eight models
-ran the grounded split ($8 \times 11 \times 5 = 440$ samples); the templated
-split was run on Haiku 4.5 and GPT-5.4-mini ($2 \times 48 \times 5 = 480$
-samples) under the study's fixed per-provider cost cap---the
-full-fleet templated run is gated on the in-progress human-expert validation
-study. The six-instance silent-reroute class (F3) was run on \emph{all eight
+ran the grounded split ($8 \times 11 \times 5 = 440$ samples); the legacy templated
+backbone was run on Haiku 4.5 and GPT-5.4-mini ($2 \times 48 \times 5 = 480$
+samples) under the study's fixed per-provider cost cap. The
+full-fleet \netbrace{}-Detect sweep over the frozen 13-family quiet-reroute suite
+(\S\ref{sec:templated}) is the specific gated next measurement---held for the
+in-progress human-expert validation (grader-validity $\kappa$) study; its
+build manifest and run recipe are released so it reproduces from a single
+pinned command. The six-instance silent-reroute class (F3) was run on \emph{all eight
 models}: Haiku and mini cover it inside the templated split, and the other six
 (Opus 4.8, Sonnet 4.6, GPT-5.5, Gemini 3.5 Flash, DeepSeek v4-pro, Kimi k2.6)
 ran it as a $6 \times 6 \times 5 = 180$-sample extension on the identical six
@@ -942,7 +1009,12 @@ task hardness. The headline silent-reroute result also rests on six
 seed-and-scope variants of a \emph{single} leak-reroute mechanism; whether the
 loud/quiet split generalizes to structurally distinct quiet-reroute mechanisms
 (LOCAL\_PREF steering, AS-path manipulation, aggregate masking) is the central
-open question and the first item a v1.1 must test. Relatedly, the reroute split
+open question. The instrument to answer it is now built and frozen---the
+13-family quiet-reroute suite with diff-shape-identical no-op calibration twins,
+scored by \netbrace{}-Detect (\S\ref{sec:templated}, \S\ref{sec:grading})---but
+its full-fleet evaluation is gated behind the human-expert/$\kappa$ study and is
+not reported here; the loud/quiet split is therefore an established result on one
+mechanism and a frozen, testable hypothesis on twelve more. Relatedly, the reroute split
 is a \emph{semantic-grader} result---under exact-string matching no model reads
 it (F3)---so the matching specification for the flow-scoped dimensions D4/D7/D10
 is a config-derived, floor-invariant, model-independent design choice (F5) that,
@@ -983,7 +1055,9 @@ that gate, and progress against it, measurable.
 
 \paragraph{Artifacts.} Code, scenario suites, generator seeds, pinned
 oracle digests, determinism reports, prompts, raw model outputs, graded
-results under both graders, and the frozen semantic-matching specification
+results under both graders, the frozen semantic-matching specification, and
+the digest-pinned build manifest and single-command run recipe for the
+13-family quiet-reroute suite (\S\ref{sec:templated})
 will be released alongside the peer-reviewed version; every number in this
 report traces to a saved run artifact (including the pooled Gemini sample
 set, both Sonnet runs, and the eight-model silent-reroute extension) and will
