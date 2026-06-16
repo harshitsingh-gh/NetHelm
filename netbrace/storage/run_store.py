@@ -63,6 +63,19 @@ def write_results_csv(run_dir: str | Path) -> Path:
 
 
 def write_run_manifest(run_dir: str | Path, manifest: RunManifest) -> Path:
+    """Persist a ``RunManifest`` (schema ``nethelm.run_manifest.v0``) for a single
+    v0-suite task run — one scenario evaluated by one model call via the CLI
+    (``netbrace safety oracle`` / ``netbrace eval run``).
+
+    SCOPE: this is the PER-TASK manifest for the v0 CLI pipeline.  It is NOT the
+    sweep-level provenance record.  ``scripts/run_sweep.py`` emits its own richer
+    ``run_manifest.json`` (schema ``netbrace.sweep_manifest.v1``) that covers the
+    full model fleet, Batfish image digest, git provenance, prompt hash, and every
+    instance graded in a sweep run.  The two are intentionally different formats for
+    different scopes; they must not be conflated.
+
+    Callers: ``netbrace/cli.py`` (the v0 CLI pipeline).
+    """
     path = Path(run_dir) / "run_manifest.json"
     return write_model(manifest, path)
 

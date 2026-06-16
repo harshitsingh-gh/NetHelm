@@ -1,0 +1,30 @@
+name: ecmp4
+
+topology:
+  defaults:
+    kind: linux
+    image: quay.io/frrouting/frr:10.6.1
+
+  nodes:
+    src:
+      binds:
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/src/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/src/frr.conf:/etc/frr/frr.conf
+    m1:
+      binds:
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/m1/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/m1/frr.conf:/etc/frr/frr.conf
+    m2:
+      binds:
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/m2/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/m2/frr.conf:/etc/frr/frr.conf
+    dst:
+      binds:
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/dst/daemons:/etc/frr/daemons
+        - /home/harshitsingh/projects/NetHelm/harness/lab/ecmp4/configs/dst/frr.conf:/etc/frr/frr.conf
+
+  links:
+    - endpoints: ["src:eth1", "m1:eth1"]
+    - endpoints: ["src:eth2", "m2:eth1"]
+    - endpoints: ["m1:eth2", "dst:eth1"]
+    - endpoints: ["m2:eth2", "dst:eth2"]

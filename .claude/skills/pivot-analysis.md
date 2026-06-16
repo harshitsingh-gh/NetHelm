@@ -47,7 +47,7 @@ After both agents report, synthesize into:
 - Trade-off vs. current path: [what you gain / what you lose]
 
 ### VERDICT: STAY / PIVOT / STRIP DOWN
-[Rationale — specifically addressing the thesis fit for the application SOP]
+[Rationale — specifically addressing fit with the NetHELM thesis and publication target]
 
 ### If PIVOT or STRIP DOWN: recommended next 3 actions
 1. [action]

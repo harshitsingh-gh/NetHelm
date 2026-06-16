@@ -52,15 +52,40 @@ def test_missing_one_dimension_is_partial():
     assert math.isclose(sr.macro_f1, 0.75, rel_tol=1e-9)
 
 
-def test_filter_transition_direction_matters():
-    # Truth = a newly-DENIED flow; prediction = same flow newly-PERMITTED.
-    # These are different elements, so this scores as a complete miss on D6.
+def test_false_session_alarm_fires_when_session_predicted_but_truth_has_none():
+    # The documented LLM trap: truth has NO session loss (e.g. an attribute change),
+    # but the model predicts a session drop. Must flag false_session_alarm.
     truth = ExtendedBlastRadius(
-        filter_deltas=[FilterDelta(
-            node="fw", src_ip="10.0.0.1", dst_ip="10.0.0.2",
-            transition="permit_to_deny", protocol="tcp", dst_port=443,
-        )]
+        waypoint_violations=[
+            WaypointViolation(src_node="src", dst_prefix="203.0.113.0/24", waypoint="way")
+        ]
+    )  # D4 only; sessions = ∅
+    pred = ExtendedBlastRadius(
+        base=BlastRadius(sessions_lost=[SessionLost(node="alt", peer_ip="0.0.0.0")])
     )
+    sr = grade_extended(pred, truth, is_trap=True, task_id="t")
+    assert sr.false_session_alarm is True
+    assert sr.macro_f1 < 0.5  # naive "session drops" reflex scores poorly
+
+
+def test_no_false_session_alarm_when_truth_has_a_session():
+    # When sessions genuinely drop, predicting them is correct, not a false alarm.
+    truth = ExtendedBlastRadius(
+        base=BlastRadius(sessions_lost=[SessionLost(node="r1", peer_ip="10.0.0.2")])
+    )
+    pred = ExtendedBlastRadius(
+        base=BlastRadius(sessions_lost=[SessionLost(node="r1", peer_ip="10.0.0.2")])
+    )
+    sr = grade_extended(pred, truth, task_id="t")
+    assert sr.false_session_alarm is False
+
+
+def test_filter_d6_is_deferred_not_scored():
+    # D6 (filter) is DEFERRED in v1: Batfish cannot ground it on FRR (needs a
+    # vendor-config snapshot), so the grader excludes "filter" from SCORED_TYPES.
+    # A filter-only prediction must NOT be scored/penalised against an ungroundable
+    # truth — 'filter' must not appear in per_type or active_types.
+    truth = ExtendedBlastRadius()  # the oracle never grounds filter in v1
     pred = ExtendedBlastRadius(
         filter_deltas=[FilterDelta(
             node="fw", src_ip="10.0.0.1", dst_ip="10.0.0.2",
@@ -68,8 +93,8 @@ def test_filter_transition_direction_matters():
         )]
     )
     sr = grade_extended(pred, truth, task_id="t")
-    assert sr.per_type["filter"].f1 == 0.0
-    assert sr.status == "fail"
+    assert "filter" not in sr.per_type
+    assert "filter" not in sr.active_types
 
 
 def test_none_prediction_is_invalid():

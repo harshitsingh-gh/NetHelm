@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Shortcut: ./kb "your query" [--top N] [--source rfcs|batfish|noc|vendor|papers]
+#
+# Python resolution order (robust to clean checkouts where the venv is absent):
+#   1. harness/venvs/nethelm/bin/python  — canonical lab venv (gitignored, built by
+#      scripts/repro_setup.sh); has sentence-transformers + faiss-cpu required for
+#      knowledge queries.
+#   2. $VIRTUAL_ENV/bin/python           — any currently-active venv.
+#   3. python3 / python on PATH          — last resort (query may fail if
+#      sentence-transformers/faiss are absent; run scripts/repro_setup.sh first).
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CANONICAL_VENV="$SCRIPT_DIR/harness/venvs/nethelm/bin/python"
+
+if [ -x "$CANONICAL_VENV" ]; then
+    PYEXEC="$CANONICAL_VENV"
+elif [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYEXEC="$VIRTUAL_ENV/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYEXEC="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYEXEC="python"
+else
+    echo "ERROR: no python found. Run scripts/repro_setup.sh to build the venv." >&2
+    exit 1
+fi
+
+exec "$PYEXEC" -m knowledge.tools.query "$@"

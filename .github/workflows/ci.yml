@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  unit-tests:
+    name: Unit tests (no Docker/Batfish/API keys)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package (dev extras only — no oracle/Batfish)
+        # oracle = pybatfish (needs Docker); knowledge = sentence-transformers/faiss
+        # (heavy, not needed for unit tests); eval = inspect-ai (heavy).
+        # Only [dev] = pytest + ruff is installed here so CI is fast and offline.
+        run: pip install -e ".[dev]"
+
+      - name: Run unit suite
+        # tests/unit/ are marked to skip Batfish/containerlab tests automatically
+        # (pytest markers: batfish, containerlab). No Docker or API keys needed.
+        run: python -m pytest tests/unit -q
+
+      - name: Lint (ruff)
+        run: ruff check netbrace/ --select E,F,W --ignore E501
+        continue-on-error: true

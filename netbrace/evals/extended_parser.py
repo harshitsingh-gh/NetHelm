@@ -15,9 +15,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from netbrace.core.dimensions import (
+    BgpRouteWithdrawn,
     ExtendedBlastRadius,
     FilterDelta,
     ForwardingAnomaly,
+    IntentViolation,
     RedundancyLoss,
     ScaleViolation,
     WaypointViolation,
@@ -116,6 +118,35 @@ def _scales(raw: Any) -> list[ScaleViolation]:
     return out
 
 
+def _bgp_withdrawals(raw: Any) -> list[BgpRouteWithdrawn]:
+    out: list[BgpRouteWithdrawn] = []
+    for item in raw or []:
+        try:
+            out.append(BgpRouteWithdrawn(
+                node=str(item["node"]),
+                network=str(item["network"]),
+                vrf=str(item.get("vrf", "default")),
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return out
+
+
+def _intents(raw: Any) -> list[IntentViolation]:
+    out: list[IntentViolation] = []
+    for item in raw or []:
+        try:
+            src = item.get("src")
+            out.append(IntentViolation(
+                kind=str(item["kind"]),  # Literal-validated -> drops if bad
+                dst=str(item["dst"]),
+                src=None if src in (None, "", "*") else str(src),
+            ))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return out
+
+
 def parse_extended_prediction(text: str) -> Optional[ExtendedBlastRadius]:
     """Main entry point. Returns a normalized ExtendedBlastRadius, or None."""
     obj = _extract_json_object(text)
@@ -133,4 +164,6 @@ def parse_extended_prediction(text: str) -> Optional[ExtendedBlastRadius]:
         filter_deltas=_filters(obj.get("filter_deltas")),
         forwarding_anomalies=_anomalies(obj.get("forwarding_anomalies")),
         scale_violations=_scales(obj.get("scale_violations")),
+        bgp_withdrawals=_bgp_withdrawals(obj.get("bgp_withdrawals")),
+        intent_violations=_intents(obj.get("intent_violations")),
     ).normalized()

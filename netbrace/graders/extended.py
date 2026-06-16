@@ -22,6 +22,15 @@ from netbrace.graders.sets import SetScore, macro_f1, micro_f1, score_sets
 
 PASS_F1_THRESHOLD = 0.80
 
+# D6 "filter" is DEFERRED in v1: the Batfish oracle cannot ground it on FRR (it
+# needs a vendor-config snapshot, e.g. Arista cEOS). We therefore do NOT score it
+# and do NOT solicit it in the prompt — otherwise a model volunteering a filter
+# prediction would be penalised against a dimension we cannot verify. Re-add
+# "filter" to SCORED_TYPES once a vendor-config oracle exists. The scored set is
+# D1–D5, D7–D10 (sessions, prefixes, reachability, waypoint, redundancy, forwarding,
+# scale, bgp_withdrawn, intent).
+SCORED_TYPES = tuple(t for t in EXT_ELEMENT_TYPES if t != "filter")
+
 ScoreStatus = Literal["pass", "partial", "fail", "invalid", "error"]
 
 
@@ -34,6 +43,19 @@ class ExtendedScoreRecord(BaseModel):
     valid_prediction: bool = True
     is_trap: bool = False
     false_alarm: bool = False
+    # CALIBRATION-TWIN false alarm, surfaced INDEPENDENT of is_trap. Fires on ANY
+    # empty-truth instance (truth_empty) with a non-empty prediction. The legacy
+    # ``false_alarm`` gates on ``is_trap and truth_empty``, which can NEVER fire on the
+    # no_op calibration twins (is_trap=False) — that made the no_op false-alarm signal a
+    # DEAD CHANNEL and the no_op FAR uncomputable. This additive field (default False,
+    # backward-compatible) restores it: it is the FP signal of the bypass-vs-no_op
+    # detector's no_op arm. See reporting.sweep_aggregate.reroute_detection_scores.
+    empty_truth_false_alarm: bool = False
+    # The documented LLM failure: predicting a BGP session loss (D1) when sessions
+    # actually stay up. Fires whenever truth sessions=∅ but the model predicts any
+    # session loss — independent of whether OTHER dimensions fire (so it works on
+    # our traps, where D4/D7/D8/D9 are non-empty while D1 is ∅).
+    false_session_alarm: bool = False
     per_type: dict[str, TypeMetrics] = Field(default_factory=dict)
     macro_f1: float = 0.0
     micro_f1: float = 0.0
@@ -68,7 +90,7 @@ def grade_extended(
     set_scores: list[SetScore] = []
     active_f1s: list[float] = []
     active_types: list[str] = []
-    for t in EXT_ELEMENT_TYPES:
+    for t in SCORED_TYPES:
         s = score_sets(pred_keys[t], truth_keys[t])
         set_scores.append(s)
         per_type[t] = TypeMetrics(
@@ -88,6 +110,12 @@ def grade_extended(
     truth_empty = ground_truth.is_empty()
     pred_empty = prediction.is_empty()
     false_alarm = is_trap and truth_empty and not pred_empty
+    # is_trap-INDEPENDENT calibration-twin false alarm: any empty-truth instance with a
+    # non-empty prediction. This is what makes the no_op (is_trap=False) FAR computable.
+    empty_truth_false_alarm = truth_empty and not pred_empty
+    # Per-dimension trap signal: the model hallucinated a session loss that did not
+    # happen. Independent of is_trap and of other dimensions.
+    false_session_alarm = (not truth_keys["sessions"]) and bool(pred_keys["sessions"])
 
     # ---- status ladder (identical to safety.grade) ----
     if exact:
@@ -105,6 +133,8 @@ def grade_extended(
         valid_prediction=True,
         is_trap=is_trap,
         false_alarm=false_alarm,
+        empty_truth_false_alarm=empty_truth_false_alarm,
+        false_session_alarm=false_session_alarm,
         per_type=per_type,
         macro_f1=macro,
         micro_f1=micro,

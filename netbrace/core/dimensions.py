@@ -162,10 +162,119 @@ class ForwardingAnomaly(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# D9 — Control-plane BGP-RIB withdrawal (advertised-but-unresolvable signal)
+# --------------------------------------------------------------------------- #
+class BgpRouteWithdrawn(BaseModel):
+    """A ``(node, vrf, network)`` that left the BGP-RIB BEST set across the change.
+
+    This is a CONTROL-PLANE fact, deliberately distinct from D2 ``PrefixLost``
+    (a main-RIB/FIB loss) and D3 ``ReachabilityLost`` (a data-plane loss). The two
+    can move together (the flagship S-IPC-01: the prefix leaves the BGP RIB AND the
+    FIB) or independently:
+
+      * has-static sibling: prefix leaves the BGP BEST set (D9 fires) but a static
+        backup keeps the FIB populated (D2 silent) and reachability alive (D3
+        silent). D9 is what makes that sibling distinguishable from a no-op.
+      * next-hop-self / recursive (class 3): the prefix can be present in the BGP
+        RIB yet absent from the FIB; characterising it needs both RIBs.
+
+    Computed from Batfish ``bgpRib`` rows whose ``Status`` contains ``BEST``,
+    diffed pre→post. Deterministic by construction on a pinned snapshot pair.
+    """
+
+    node: str
+    network: str
+    vrf: str = "default"
+
+    @field_validator("node")
+    @classmethod
+    def _node(cls, v: str) -> str:
+        return canon_node(v)
+
+    @field_validator("network")
+    @classmethod
+    def _network(cls, v: str) -> str:
+        return canon_prefix(v)
+
+    @property
+    def key(self) -> str:
+        return f"bgp_withdrawn|node={self.node}|vrf={self.vrf}|network={self.network}"
+
+
+# --------------------------------------------------------------------------- #
+# D10 — Intent / policy-invariant violation
+# --------------------------------------------------------------------------- #
+class IntentViolation(BaseModel):
+    """A declared POLICY INVARIANT that HELD pre-change but is VIOLATED post-change.
+
+    This is the dimension the connectivity/loss axes (D1-D3) structurally cannot
+    catch: a change where reachability SURVIVES (D3 = ∅) yet a policy intent the
+    network was carrying is broken. The flagship case is ``ipc_aggregate`` — the
+    /25 more-specifics (multihoming / traffic-engineering pins) are withdrawn from
+    the client while the covering /24 aggregate keeps coarse reachability alive. The
+    /24 answers a ping, so D3 stays silent, but the TE intent those /25s served is
+    dead.
+
+    The ``kind`` Literal names the invariant family the oracle evaluated:
+      * ``reachability``     — src must be able to reach dst (a D3-style invariant
+                               but declared as a named intent the model must honor).
+      * ``waypoint``         — src->dst must transit a required node.
+      * ``isolation``        — src must NOT be able to reach dst (segmentation).
+      * ``redundancy_floor`` — (node, dst) must keep >= ``floor`` installed paths.
+      * ``te_pin``           — traffic to dst must follow the pinned more-specific
+                               route (the specific prefix must be present/best at
+                               src), not fall back onto a covering aggregate.
+
+    The ``.key`` is deterministic and carries ONLY the invariant's identity
+    (kind/src/dst) — NOT the free-text ``note`` (oracle-side prose) nor any live
+    payload — so set-grading is stable across runs and the note never leaks into a
+    graded key. ``note`` exists for human-readable oracle bookkeeping only.
+    """
+
+    kind: Literal[
+        "reachability", "waypoint", "isolation", "redundancy_floor", "te_pin"
+    ]
+    dst: str
+    src: Optional[str] = None
+
+    @field_validator("src")
+    @classmethod
+    def _src(cls, v: Optional[str]) -> Optional[str]:
+        return canon_node(v) if v else v
+
+    @field_validator("dst")
+    @classmethod
+    def _dst(cls, v: str) -> str:
+        # dst may be a prefix (te_pin / reachability) or a node (isolation): try the
+        # prefix canonicalizer and fall back to the node canonicalizer so either is
+        # stable. canon_prefix accepts a bare IP -> /32.
+        try:
+            return canon_prefix(v)
+        except Exception:
+            return canon_node(v)
+
+    @property
+    def key(self) -> str:
+        src = "*" if self.src is None else self.src
+        return f"intent|kind={self.kind}|src={src}|dst={self.dst}"
+
+
+# --------------------------------------------------------------------------- #
 # D8 — Scale / resource overflow
 # --------------------------------------------------------------------------- #
 class ScaleViolation(BaseModel):
-    """A device resource that crosses its modeled limit after the change."""
+    """A device resource that crosses its modeled limit after the change.
+
+    The ``resource`` Literal keeps all four element types so a model MAY predict a
+    ``label`` (MPLS LFIB) or ``acl_tcam`` overflow and the parser will accept it.
+    But the current Batfish oracle (``ExtendedOracle._scale_violations``) only
+    COMPUTES ``fib``/``rib`` ground truth — those are the resources the installed
+    main-RIB route count is a valid proxy for. ``label``/``acl_tcam`` would need a
+    vendor/MPLS model Batfish does not provide, so no scenario should declare a
+    budget for them until such a model exists (the oracle skips them rather than
+    firing the IPv4 route count against an MPLS/TCAM ceiling). See
+    ``_ROUTE_COUNT_RESOURCES`` in extended_oracle.py.
+    """
 
     node: str
     resource: Literal["fib", "rib", "label", "acl_tcam"]
@@ -182,9 +291,13 @@ class ScaleViolation(BaseModel):
         return f"scale|node={self.node}|resource={self.resource}"
 
 
-# The five NEW element types, in a fixed order. The full grading surface is the
-# v0 types followed by these (see EXT_ELEMENT_TYPES below).
-NEW_ELEMENT_TYPES = ("waypoint", "redundancy", "filter", "forwarding", "scale")
+# The NEW element types, in a fixed order. The full grading surface is the
+# v0 types followed by these (see EXT_ELEMENT_TYPES below). ``bgp_withdrawn`` (D9)
+# precedes ``intent`` (D10), each appended at the end so every prior ordering is
+# preserved as a prefix (no existing index shifts).
+NEW_ELEMENT_TYPES = (
+    "waypoint", "redundancy", "filter", "forwarding", "scale", "bgp_withdrawn", "intent",
+)
 EXT_ELEMENT_TYPES = ("sessions", "prefixes", "reachability") + NEW_ELEMENT_TYPES
 
 
@@ -208,6 +321,8 @@ class ExtendedBlastRadius(BaseModel):
     filter_deltas: list[FilterDelta] = Field(default_factory=list)
     forwarding_anomalies: list[ForwardingAnomaly] = Field(default_factory=list)
     scale_violations: list[ScaleViolation] = Field(default_factory=list)
+    bgp_withdrawals: list[BgpRouteWithdrawn] = Field(default_factory=list)
+    intent_violations: list[IntentViolation] = Field(default_factory=list)
 
     def normalized(self) -> "ExtendedBlastRadius":
         """Return a copy with the base and every new list deduped+sorted by key."""
@@ -218,6 +333,8 @@ class ExtendedBlastRadius(BaseModel):
             filter_deltas=_dedupe_sort(self.filter_deltas),
             forwarding_anomalies=_dedupe_sort(self.forwarding_anomalies),
             scale_violations=_dedupe_sort(self.scale_violations),
+            bgp_withdrawals=_dedupe_sort(self.bgp_withdrawals),
+            intent_violations=_dedupe_sort(self.intent_violations),
         )
 
     def key_sets(self) -> dict[str, set[str]]:
@@ -228,6 +345,8 @@ class ExtendedBlastRadius(BaseModel):
         ks["filter"] = {e.key for e in self.filter_deltas}
         ks["forwarding"] = {e.key for e in self.forwarding_anomalies}
         ks["scale"] = {e.key for e in self.scale_violations}
+        ks["bgp_withdrawn"] = {e.key for e in self.bgp_withdrawals}
+        ks["intent"] = {e.key for e in self.intent_violations}
         return ks
 
     def is_empty(self) -> bool:
@@ -237,4 +356,6 @@ class ExtendedBlastRadius(BaseModel):
             or self.filter_deltas
             or self.forwarding_anomalies
             or self.scale_violations
+            or self.bgp_withdrawals
+            or self.intent_violations
         )

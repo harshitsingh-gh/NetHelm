@@ -1,12 +1,15 @@
-"""Batfish ground-truth oracle for blast-radius.
+"""Batfish ground-truth oracle for blast-radius (v0 / LEGACY — superseded by ExtendedOracle).
 
-  ⚠️  NOT YET RUN AGAINST A LIVE BATFISH. The pure-Python pieces (snapshot
-      materialization, set diffing) are straightforward, but the pybatfish query
-      column names and FRR modeling behavior MUST be verified on the lab host
-      before trusting the output. See plan.md §14 open questions Q2/Q3/Q4.
-      The first task for whoever runs this on the lab: run
-      `netbrace safety oracle ... --debug` on ONE shut_neighbor task and confirm
-      the reported sessions_lost matches `show ip bgp summary` reality.
+  STATUS (verified): RUN against live Batfish on the pinned digest
+      (batfish/allinone @ sha256:09817554db90). The pybatfish query column names and FRR
+      modeling were verified on the 4-node square lab, and shut_neighbor sessions_lost was
+      cross-checked against `show ip bgp summary` (see docs/batfish_oracle_runbook.md and
+      HANDOFF.md "verified facts").
+      ⚠️ This v0 oracle grades the MAIN RIB only — it has NO D9 BGP-RIB-best term, so it is a
+      FALSE-QUIET for control-plane-only events such as remove_network (a BGP withdrawal the
+      static backup masks in the main RIB). The CANONICAL v1 source of truth is
+      netbrace.batfish.extended_oracle.ExtendedOracle (the unified D1-D10 oracle); use this v0
+      oracle only for the legacy shut_neighbor square4 suite.
 
 Design (plan.md §5): we compute the baseline state (S0) and post-change state
 (S1) and diff them. We query each snapshot SEPARATELY and diff in Python rather

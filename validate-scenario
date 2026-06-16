@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Validity Agent wrapper — check a scenario before adding it to the NetHELM benchmark.
+#
+# Usage:
+#   ./validate-scenario --scenario "Remove next-hop-self on iBGP RR in frr_square"
+#   ./validate-scenario --file tasks/safety/baseline_square4.py
+#   ./validate-scenario --pre configs/r1_pre.conf --post configs/r1_post.conf
+#   ./validate-scenario --dry-run --scenario "..."
+#
+# Requires ANTHROPIC_API_KEY env var.
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="$REPO/harness/venvs/nethelm/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+  echo "ERROR: venv not found at $PYTHON" >&2
+  echo "       Run: python -m venv harness/venvs/nethelm && harness/venvs/nethelm/bin/pip install -e '.[knowledge]' anthropic" >&2
+  exit 1
+fi
+
+exec "$PYTHON" "$REPO/agents/validity_agent.py" "$@"

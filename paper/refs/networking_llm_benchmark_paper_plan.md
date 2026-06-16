@@ -239,7 +239,7 @@ A *full* execution-grounded benchmark across 4 protocols × 3 vendors × 6 task 
   - Build the normalized harness that runs NetConfBench + Cornetto + NIKA tasks against a single model API surface.
   - Author the **safety / blast-radius** category (~300 tasks) with Batfish-derived ground truth. Document the grader's determinism.
   - Hand-label a 100-task safety subset; report inter-grader agreement.
-  - **Begin academic-collaborator outreach.** Cold-email 3–5 groups (Vanbever@ETH + Cui@Tsinghua) with a working demo that already imports their benchmark. Not a pitch deck.
+  - **Begin academic-collaborator outreach.** Cold-email 3–5 LLM-eval / network-verification groups (e.g. Vanbever@ETH + Cui@Tsinghua) with a working demo that already imports their benchmark. Not a pitch deck.
 - **Q1 2027 (Months 7–9 — measurement and writing):**
   - Run the full model fleet (GPT-4 family, Claude family, Gemini, Llama-3.1-70B, Qwen-2.5-32B) across all imported benchmarks + the new S category.
   - Add `junos-mcp-server` as a commercial-agent baseline. Add Cisco DNM **iff** approval landed.

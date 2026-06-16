@@ -144,12 +144,27 @@ already verified in Batfish). Two intents are implemented:
 - **`shut_neighbor`**: removes all three `neighbor <peer_ip> ...` lines for one
   peer on one node. Expected blast: BGP session drops from both ends.
 - **`remove_network`**: removes the `network 10.0.0.X/32` origination line on one
-  node. Expected blast: that loopback prefix disappears from the BGP RIB on all
-  peers.
+  node. Expected blast: the prefix is withdrawn from every peer's **BGP RIB**
+  (a D9 event) — but it stays in the **main RIB** via the static route, so the
+  v0 `prefixes_lost` (main-RIB) diff sees NOTHING. The v0 oracle therefore
+  grades this change as an (incorrect) **empty** blast radius — a false-quiet.
+  Grade it instead via `ExtendedOracle` + `bgp_watch_prefixes` (D9). The shipped
+  v0 suite is `shut_neighbor`-only for this reason (see
+  `tests/unit/test_v0_remove_network_guard.py`).
 
 The generator produces (4×3) + 4 = 16 unique tasks for a full set (12
 shut_neighbor + 4 remove_network). `--count` caps or extends by cycling through
 combinations.
+
+> **Design caveat (square4 BGP is forwarding-decorative).** The square4 baseline
+> reaches every loopback via a full mesh of `/32` static routes (admin-distance 1),
+> which shadow the iBGP-learned routes — so BGP **never installs to the main RIB**;
+> the iBGP control plane is verified for *session/origination* behavior but the
+> *forwarding* path rides the statics. A scenario on this baseline must therefore
+> NOT claim a main-RIB / forwarding effect from a BGP-only change (that is exactly
+> why `remove_network` is a v0 false-quiet above). Forwarding-effect scenarios use
+> the IGP-backed (OSPF) baselines instead. The static-mesh-as-IGP is a deliberate
+> determinism fixture, not idiomatic design.
 
 ```bash
 netbrace safety generate --count 20 --out tasks/safety/v0

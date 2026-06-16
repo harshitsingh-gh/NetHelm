@@ -8,12 +8,19 @@ def test_registry_builds_all():
     for name in scenarios.REGISTRY:
         scn = scenarios.build(name)
         assert scn.change_target in scn.pre_configs
-        # the patch applies cleanly to the target's baseline config
         post = scn.post_configs()
-        assert post[scn.change_target] != scn.pre_configs[scn.change_target]
-        # untargeted nodes are unchanged
+        # the changed node-set: a multi-node scenario declares ``patches`` (a
+        # fabric-wide template touching >1 node), else exactly the change_target.
+        changed_expected = set(scn.patches) if scn.patches else {scn.change_target}
+        assert changed_expected <= set(scn.pre_configs)
+        # the change_target is always among the changed nodes ...
+        assert scn.change_target in changed_expected
+        # ... and every declared changed node actually differs post-change ...
+        for n in changed_expected:
+            assert post[n] != scn.pre_configs[n]
+        # ... while all other nodes are unchanged.
         for n in scn.pre_configs:
-            if n != scn.change_target:
+            if n not in changed_expected:
                 assert post[n] == scn.pre_configs[n]
 
 

@@ -1,0 +1,195 @@
+================================================================================
+ipc3 LIVE VERIFICATION — S-IPC-01 Ground Truth Proof
+Date: 2026-06-08 (UTC)
+FRR image: quay.io/frrouting/frr:10.6.1
+Containerlab version: 0.75.0
+Scenario: outbound prefix-list + route-map on r1 toward r2 (CLEANUP_OUT)
+================================================================================
+
+TOPOLOGY
+--------
+  r2 (AS65000, RR-client) ─ eth1:192.0.2.2/30 ──── 192.0.2.1/30:eth1 ─ r1 (AS65000, RR)
+  r3 (AS65000, RR-client) ─ eth1:192.0.2.6/30 ──── 192.0.2.5/30:eth2 ─ r1
+  r3 originates 203.0.113.0/24 via dum0 (203.0.113.1/24), NO static backup anywhere.
+  Loopbacks: r1=10.0.0.1/32, r2=10.0.0.2/32, r3=10.0.0.3/32 (static routes everywhere)
+
+CHANGE APPLIED (S-IPC-01, on r1 only):
+---------------------------------------
+  ip prefix-list CLEANUP_OUT seq 5  permit 10.0.0.0/8 le 32
+  ip prefix-list CLEANUP_OUT seq 10 permit 192.0.2.0/24 le 30
+  route-map TO_R2_OUT permit 10
+   match ip address prefix-list CLEANUP_OUT
+  !
+  (address-family ipv4 unicast) neighbor 10.0.0.2 route-map TO_R2_OUT out
+  Applied via: vtysh configure terminal + clear ip bgp 10.0.0.2 soft out
+
+================================================================================
+PRE-STATE (baseline, before change)
+================================================================================
+
+[r1: show ip bgp summary]
+IPv4 Unicast Summary:
+BGP router identifier 10.0.0.1, local AS number 65000 VRF default vrf-id 0
+BGP table version 1
+RIB entries 1, using 152 bytes of memory
+Peers 2, using 33 KiB of memory
+
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.2        4      65000         3         4        1    0    0 00:00:17            0        1 N/A
+10.0.0.3        4      65000         6         6        1    0    0 00:00:17            1        1 N/A
+
+[r2: show ip bgp summary]
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000         4         3        1    0    0 00:00:17            1        0 N/A
+
+[r3: show ip bgp summary]
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000         4         4        1    0    0 00:00:17            0        1 N/A
+
+[r2: show ip bgp 203.0.113.0/24]
+BGP routing table entry for 203.0.113.0/24, version 1
+Paths: (1 available, best #1, table default)
+  Local
+    10.0.0.3 from 10.0.0.1 (10.0.0.3)
+      Origin IGP, metric 0, localpref 100, valid, internal, best (First path received)
+      Originator: 10.0.0.3, Cluster list: 10.0.0.1
+      Last update: Mon Jun  8 10:18:22 2026
+  (route-reflector correctly shows originator=10.0.0.3, cluster=10.0.0.1)
+
+[r2: show ip route 203.0.113.0/24]
+Routing entry for 203.0.113.0/24
+  Known via "bgp", distance 200, metric 0, best
+  Last update 00:00:25 ago
+  Flags: Recursion iBGP Selected
+  Status: Installed
+    10.0.0.3 (recursive), weight 1
+  *   192.0.2.1, via eth1, weight 1
+
+[r2: ping -c 3 -I 10.0.0.2 203.0.113.1] → 3/3 success (TTL=63, confirms r1 transit)
+PING 203.0.113.1 (203.0.113.1) from 10.0.0.2: 56 data bytes
+64 bytes from 203.0.113.1: seq=0 ttl=63 time=0.051 ms
+64 bytes from 203.0.113.1: seq=1 ttl=63 time=0.147 ms
+64 bytes from 203.0.113.1: seq=2 ttl=63 time=0.095 ms
+3 packets transmitted, 3 packets received, 0% packet loss
+
+PRE GATE: PASS
+  - All 3 sessions ESTABLISHED (numeric uptime on all routers)
+  - r2 has 203.0.113.0/24 in BGP table AND FIB, next-hop 10.0.0.3 (via RR r1)
+  - r2 REACHES 203.0.113.1 (loopback-sourced ping: 3/3)
+
+================================================================================
+POST-STATE (after S-IPC-01: CLEANUP_OUT route-map applied on r1 toward r2)
+================================================================================
+
+[r1: show ip bgp summary — POST]
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.2        4      65000         6         8        1    0    0 00:03:26            0        0 N/A
+10.0.0.3        4      65000         9         9        1    0    0 00:03:26            1        1 N/A
+
+RESULT: r1↔r2 session Up/Down = 00:03:26 (continuous uptime — NO RESET).
+        r1 now sends 0 prefixes to r2 (route-map filters 203.0.113.0/24 via implicit deny).
+
+[r2: show ip bgp summary — POST]
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000         8         6        1    0    0 00:03:26            0        0 N/A
+
+RESULT: r1↔r2 session still ESTABLISHED (same 00:03:26 uptime). r2 receives 0 prefixes.
+
+[r3: show ip bgp summary — POST]
+Neighbor        V         AS   MsgRcvd   MsgSent   TblVer  InQ OutQ  Up/Down State/PfxRcd   PfxSnt Desc
+10.0.0.1        4      65000         7         7        1    0    0 00:03:26            0        1 N/A
+
+RESULT: r1↔r3 session ESTABLISHED; r3 receives 0 (loopbacks not reflected back to origin).
+
+[r2: show ip bgp 203.0.113.0/24 — POST]
+% Network not in table
+
+[r2: show ip route 203.0.113.0/24 — POST]
+% Network not in table
+
+[r2: ip route show 203.0.113.0/24 — POST]
+(empty — prefix absent from kernel FIB)
+
+[r2: ping -c 3 -I 10.0.0.2 203.0.113.1 — POST] → 0/3 (100% loss)
+PING 203.0.113.1 (203.0.113.1) from 10.0.0.2: 56 data bytes
+3 packets transmitted, 0 packets received, 100% packet loss
+REACH: NO
+
+[r1: ping -c 3 -I 10.0.0.1 203.0.113.1 — POST] → 3/3 success
+64 bytes from 203.0.113.1: seq=0 ttl=64 time=0.042 ms
+64 bytes from 203.0.113.1: seq=1 ttl=64 time=0.074 ms
+64 bytes from 203.0.113.1: seq=2 ttl=64 time=0.046 ms
+3 packets transmitted, 3 packets received, 0% packet loss
+REACH: YES
+
+[r3: ping -c 3 -I 10.0.0.3 203.0.113.1 — POST] → 3/3 success
+64 bytes from 203.0.113.1: seq=0 ttl=64 time=0.044 ms
+64 bytes from 203.0.113.1: seq=1 ttl=64 time=0.097 ms
+64 bytes from 203.0.113.1: seq=2 ttl=64 time=0.079 ms
+3 packets transmitted, 3 packets received, 0% packet loss
+REACH: YES
+
+NEGATIVE CONTROLS — r2 loopback routes (static backup, BGP-independent):
+[r2: show ip route 10.0.0.1/32 — POST]
+  Known via "static", distance 1, metric 0, best — Installed
+  * 192.0.2.1, via eth1 → PRESENT (static route survives)
+
+[r2: show ip route 10.0.0.3/32 — POST]
+  Known via "static", distance 1, metric 0, best — Installed
+  * 192.0.2.1, via eth1 → PRESENT (static route survives)
+
+[r1 running-config post-change — policy section]
+ip prefix-list CLEANUP_OUT seq 5 permit 10.0.0.0/8 le 32
+ip prefix-list CLEANUP_OUT seq 10 permit 192.0.2.0/24 le 30
+!
+route-map TO_R2_OUT permit 10
+ match ip address prefix-list CLEANUP_OUT
+!
+(router bgp 65000 / address-family ipv4 unicast)
+  neighbor 10.0.0.2 route-map TO_R2_OUT out
+
+================================================================================
+VERIFICATION SUMMARY
+================================================================================
+
+Point | Description                                    | Expected   | Actual     | PASS?
+------|------------------------------------------------|------------|------------|------
+4     | r1↔r2 session remains ESTABLISHED              | ESTABLISHED| ESTABLISHED| PASS
+5     | r2 loses 203.0.113.0/24 from BGP table+FIB     | LOST       | LOST       | PASS
+6     | r2 cannot reach 203.0.113.1                    | FAIL       | FAIL       | PASS
+7a    | r2 loopback routes (10.0.0.1, 10.0.0.3) intact | PRESENT    | PRESENT    | PASS
+7b    | r1 still reaches 203.0.113.1                   | SUCCESS    | SUCCESS    | PASS
+7c    | r3 still reaches 203.0.113.1                   | SUCCESS    | SUCCESS    | PASS
+
+ALL 6 POINTS PASS.
+
+================================================================================
+VERDICT
+================================================================================
+
+Live FRR (quay.io/frrouting/frr:10.6.1) CONFIRMS the Batfish static ground truth.
+
+The S-IPC-01 central claim is proven on hardware:
+  "An outbound prefix-list/route-map on the route reflector (r1) toward a
+   client (r2) SILENTLY WITHDRAWS the customer prefix 203.0.113.0/24 from
+   r2's BGP table and FIB while ALL iBGP SESSIONS REMAIN ESTABLISHED.
+   Reachability collapses for r2. r1 and r3 are unaffected. The loopback
+   static backup survives (the network appears 'healthy' from a session-
+   monitoring viewpoint)."
+
+This is NOT a Batfish artifact. It is reproducible live FRR behavior.
+
+Zero divergence from Batfish static ground truth:
+  D1 sessions_lost  = {} (confirmed: all sessions ESTABLISHED throughout)
+  D2 prefixes_lost  = {(r2, 203.0.113.0/24)} (confirmed: exactly this, nothing else)
+  D3 reachability_lost = {(r2, 203.0.113.1)} (confirmed: r2→203.0.113.1 = NO_ROUTE)
+  Loopbacks (10.0.0.1, 10.0.0.2, 10.0.0.3) survived on r2 as expected.
+
+NOTE ON REACHABILITY TEST METHOD:
+  The ping test used `-I <loopback>` (source = loopback IP) because the
+  containerlab management network (`172.20.20.0/24`) is present on eth0 and
+  r3 has no static route for r2's link IP (192.0.2.2). Using `-I 10.0.0.2`
+  (the BGP-peering source) ensures the return path follows static routes
+  (r3 has `ip route 10.0.0.2/32 192.0.2.5`), which is the correct test for
+  the iBGP data plane. This matches how BGP implementations source traffic.
+================================================================================

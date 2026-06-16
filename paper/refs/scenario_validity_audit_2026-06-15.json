@@ -1,0 +1,1135 @@
+{
+  "rerouteSummaries": [
+    {
+      "family": "igp_metric",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The committed ground truth in the generator matches the oracle artifact AND a fresh live oracle run exactly, on all 4 combos \u2014 no GT drift.",
+          "fix": "None \u2014 GT is consistent across generator, committed artifact, and live re-run."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "FALSE-QUIET landmine is NOT triggered: Batfish's pinned digest genuinely models the OSPF-cost -> recursive-next-hop -> egress-shift chain on this FRR surface, so the D4 firing is real, not a silent-empty masquerading as a pass.",
+          "fix": "None \u2014 the bypass/no_op contrast empirically proves the oracle is not false-quiet."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Determinism holds and there is no ECMP/router-id/age tiebreak exposure (D5 correctly empty).",
+          "fix": "None."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Operational gotcha (not a GT defect): the bundled determinism helper compute_extended_with_determinism_check / repeated compute() on a SHARED ExtendedOracle Session against the same network+snapshot names throws a transient 404 (question-answer cache race) under tight rapid-fire reuse.",
+          "fix": "For determinism gating of this family, use a distinct network name per run (or add overwrite/retry to the fileParseStatus+traceroute calls in extended_oracle.py). Does NOT affect ground-truth correctness; the underlying GT is byte-identical when the race is avoided."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "RFC citation step-number is cosmetically inconsistent (step 6 vs step (e)) but points to the correct clause.",
+          "fix": "Optional: standardize on '\u00a79.1.2.2 (e)' across docstring and corpus for reviewer-proofing. Not load-bearing for gradeability."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "RFC 4271 step citation is imprecise in the generator docstring: it cites '\u00a79.1.2.2 step 6' (generator_igp_metric.py:13 and :60) while the corpus correctly cites '\u00a79.1.2.2 step (e)'.",
+          "fix": "In generator_igp_metric.py lines 13 and 60, change 'RFC 4271 \u00a79.1.2.2 step 6' to 'RFC 4271 \u00a79.1.2.2 step (e) (FRR best-path igp-metric step)'. Cosmetic only \u2014 the mechanism is empirically correct; this is purely citation hygiene for the reviewer-facing docstring."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "bgpRib at src shows only the single BEST path, so the 'two attribute-tied received paths' premise is verified only indirectly (by the fact that an OSPF-only edit flips the winner).",
+          "fix": "Optional rigor only: if a reviewer challenges the tie, dump both received paths once (e.g. a one-off bgpRib with status filter relaxed, or routes on way/alt confirming both originate the /24 with identical attrs) and note it in the oracle_verify artifact. Not required \u2014 the indirect proof is logically complete."
+        }
+      ]
+    },
+    {
+      "family": "igp_summary",
+      "net": "MAJOR_ISSUES",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "MINOR_ISSUES"
+      },
+      "confirmed": [
+        {
+          "severity": "major",
+          "lens": "design",
+          "claim": "Mechanism mis-attribution: the generator builds NO OSPF summarization, but the corpus that grounds it and the frozen-set catalog both name the mechanism `area N range ... cost C` with /32-suppression as the explicit 'linchpin'. The built config resolves eg-lo via its own per-/32 Type-3 LSA (NOT suppressed behind any summary).",
+          "fix": "Either (a) rebuild with the bare `area {area1} range {eg-lo-supernet}/M cost C` on each ABR (which batfish_verified_facts.md:154-163 says IS modeled \u2014 see next finding) so the config matches the grounded mechanism and the /32 is actually suppressed; OR (b) if the area-range form truly does not parse on this digest, RE-TITLE the corpus doc + catalog + docstring to 'inter-area per-/32 Type-3 metric displacement' and explicitly state the /32 is NOT suppressed and the distinction from the link-metric sibling is only the area boundary, not summarization. Do not ship a generator whose name/grounding claim summarization it does not build.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's claim is exactly right and fully reproducible: the generator names/grounds an OSPF summarization mechanism (`area range cost` + /32-suppression) that it does not build; it ships a bare `ip ospf cost` edit on an ABR backbone interface instead. Severity MAJOR is correct, not blocking: the oracle artifact proves the as-built config IS deterministically gradeable and the committed GT (D4 waypoint + D10 intent only, everything else empty) is CORRECT \u2014 nothing is mis-graded or false-quiet. The harm is to reviewer-credibility: a benchmark whose corpus title, frozen catalog (line 38), and docstring distinctness argument (lines 6-13: \"Type-3 \u00a712.4.3 not \u00a716.1 SPF\") all rest on summarization that is absent. That is a real flaw a reviewer diffing corpus-against-code will hit, but it does not invalidate any result. Not minor because the false mechanism is load-bearing for the catalog's distinctness/grounding claims."
+        },
+        {
+          "severity": "major",
+          "lens": "design",
+          "claim": "Direct contradiction between two committed ground-truth artifacts on the SAME digest and SAME date about whether `area range cost` parses. The generator's design decision rests on the claim that contradicts the oracle-engineer's live test.",
+          "fix": "Re-run the live parse on the pinned digest for BOTH `area N range A.B.C.D/M cost C` (bare) and `... advertise cost C` and record initIssues/PARTIALLY_UNRECOGNIZED status authoritatively. If the bare form parses (as batfish_verified_facts.md asserts), the generator should use it (resolves finding #1). If it does NOT, fix batfish_verified_facts.md lines 154-163 which are then false. One of these two committed artifacts is wrong and a reviewer pulling the thread will find it.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's claim is fully reproducible from the primary files. The generator docstring (lines 36, 39) asserts the bare `area range cost` form is PARTIALLY_UNRECOGNIZED on the digest, while the oracle-engineer's batfish_verified_facts.md (lines 154-159, same digest, same date) asserts that exact bare form IS MODELED with zero init issues, and a third committed artifact (ospf_summary_cost_nexthop_reroute.md, lines 81/136) corroborates the verified-facts side. These are mutually exclusive statements about the same syntax on the same digest. The generator conflated the bare `cost` form (modeled per the other two) with the `advertise cost` form (genuinely unrecognized per batfish_verified_facts.md:167). A reviewer auditing the KB will hit this in minutes.\n\nSeverity is major, not blocking: the generator never renders an `area range` line \u2014 it uses `ip ospf cost` on the ABR backbone interface, which both artifacts agree is honored, and the oracle_verify JSON (VERDICT=PASS, pure_ok, determinism_10x, clean D4+D10-only signature) confirms the committed ground truth is correct and gradeable. So no scenario is mis-graded; the defect is a self-contradicting provenance claim that damages reviewer trust and must be fixed by re-running the live parse and recording one authoritative status. The reviewer's stated severity (major) is therefore correct; I confirm it."
+        }
+      ],
+      "new_from_verify": [
+        "DOCSTRING'S EXCUSE IS FALSE PER THE PROJECT'S OWN KB (reviewer missed this): generator_igp_summary.py:36-40 claims '`area range cost` is PARTIALLY_UNRECOGNIZED on the digest (verified 2026-06-14)', but batfish_verified_facts.md:154-163 \u2014 SAME digest sha256:09817554db90, SAME date 2026-06-14, SAME src/wabr/babr/eg design, SAME oracle-engineer \u2014 states the BARE `area N range A.B.C.D/M cost C` form IS MODELED, parses clean, flips the inter-area next-hop AND suppresses the /32 (lines 160-163, the 'linchpin'); only the `advertise cost C` variant is unrecognized (line 167). Verified same digest in both files via grep '09817554db90'. These committed artifacts directly contradict each other. Therefore fix-option (a) [build the real `area range cost`] is MANDATED by the project's own verified facts (line 159 even cross-references this exact corpus doc), and the reviewer's fallback (b) [re-title to 'per-/32 displacement'] rests on a premise the KB refutes.",
+        "igp_summary is a near-CLONE of igp_metric, weakening the 'distinct mechanism' count: byte-identical cost constants (generator_igp_metric.py:124-130 _COST_WAY/ALT_PRE=10/100, RAISED=200/300, LOWERED=5 vs generator_igp_summary.py:155-162 _COST_WABR/BABR identical), identical 4-combo raise/lower x bypass/no_op structure, both reduce to 'edit ONE `ip ospf cost` integer -> recursive next-hop moves -> D4+D10 fire'. For a model reading the diff both present identically as 'an ip ospf cost line changed X->Y'. As-built (no summarization) the only difference is WHICH node/area the edited interface sits in (src intra-area link vs ABR backbone link) \u2014 a topology-placement difference, not a different config-reading task. A reviewer will call these 'two instances of one OSPF-cost trick', undercutting the ~13-distinct-mechanism frozen-set claim.",
+        "Hard-coded never-randomized cost values are a contamination/memorization fingerprint AND a no_op-calibration defeat: per-seed randomization (lines 106-109, 227-248) randomizes ASN/IP/area-id/names but NOT costs \u2014 {10,100,200,5,300} are fixed across ALL seeds in BOTH Family-1 generators. Verified by rendering all 4 combos at seed 500: the EDITED node's pre-cost alone classifies bypass vs no_op (pre=10=>wabr/winner, pre=100=>babr/loser) combined with edit direction, with ZERO routing reasoning. The no_op twin is meant to PROVE the model reasoned about recursive resolution; a model that memorizes 'edited node pre-cost 10 + raised => bypass' defeats that proof. Draw costs per-seed (keep only the strict-gap invariant) to neutralize. NOTE: the PROSE itself does not leak \u2014 _description (523-532) and _INTENTS_TEXT (535-540) are style-identical for bypass/no_op and never state the routing outcome; the leak is the fixed numeric scheme, not the text.",
+        "DISTINCTNESS-CLAIM EROSION (major): The generator's claimed distinct mechanism is 'inter-area Type-3 SUMMARY metric with the /32 SUPPRESSED behind an area range' (docstring :2,16-21; noc card ospf_summary_cost_nexthop_reroute.md:18 'egress loopback /32 is SUPPRESSED behind an area N range A.B.C.D/M cost C'; batfish_verified_facts.md:160-163 calls /32 suppression 'the linchpin that makes the summary-cost lever distinct from the link-cost hot-potato lever'). But the render code (_abr_config :368-393) configures NO summarization: router ospf block (:385) has only router-id + passive-interface; eg-lo/32 propagates as an unsuppressed Type-3 host route and the metric is driven purely by eth2 backbone interface cost (:383-384). The /32 is NOT suppressed. So the generator's actual mechanism is 'additive inter-area Type-3 host-route metric via ABR backbone link cost' \u2014 which is an ADDITIVE IGP-cost-on-a-path-segment lever, the SAME primitive family as the igp_metric sibling (generator_igp_metric.py: intra-area `ip ospf cost`), differing only in multi-area topology, not in the lever. The linchpin distinguishing feature (range-suppressed /32 as LPM resolver) that the KB cites to separate this from the hot-potato lever IS ABSENT from the artifact. A hostile reviewer can argue igp_summary is igp_metric relabeled with an extra area boundary.",
+        "DOCSTRING SELF-INCONSISTENCY (minor): generator_igp_summary.py:48 'the eg-lo /32 route is still present' contradicts the KB's distinctness story that the /32 is suppressed behind a range (noc :18, verified-facts :160). The generator is internally consistent with 'present /32' but that directly undercuts the 'summary suppresses the specific' rationale used to justify the family as distinct. Pick one mechanism and make all three artifacts agree.",
+        "NAME/TAG MISLEADING (nit): the mechanism is tagged `igp-summary-default-nexthop` (:1) and `INTER-AREA SUMMARY DISPLACEMENT`, implying OSPF summarization (area range). Since no summarization is configured, the name oversells; a reviewer reading config-then-name will flag the mismatch."
+      ],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Corpus and generator describe DIFFERENT decisive knobs: the corpus mandates `area N range A.B.C.D/M cost C` with the egress /32 suppressed behind the summary (ospf_summary_cost_nexthop_reroute.md:12-14, 81-94, 130-139), but the generator never uses `area range` and edits the backbone-interface `ip ospf cost` instead.",
+          "fix": "Add one line to the corpus file ospf_summary_cost_nexthop_reroute.md noting that the GRADEABLE implementation on the pinned digest uses backbone-interface `ip ospf cost` (which derives the same Type-3 metric per RFC 2328 \u00a716.2/\u00a712.4.3), since `area range cost` is PARTIALLY_UNRECOGNIZED. Purely a doc-sync nit; the oracle GT is correct."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The oracle artifact and CLAUDE.md reference the pinned tag `batfish/allinone:nethelm @ sha256:09817554db90`, but the currently-running container is tagged `batfish/allinone:latest`.",
+          "fix": "No action required for correctness. Optionally pin the clab/run scripts to the `:nethelm` tag (or the digest) rather than `:latest` so a future `docker pull` of `:latest` cannot silently move the digest out from under the oracle."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Rubric item (e) on deterministic-MED stripping (med_far_as) is not applicable to this family.",
+          "fix": "None \u2014 noted only to close the rubric item explicitly."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "Distinctness from the igp_metric sibling is weaker than the catalog claims, because without summarization the only structural difference is the area boundary (intra-area link cost vs inter-area Type-3 metric), not the corpus's claimed 'RIB LPM recursion vs BGP best-path tiebreak' layer difference.",
+          "fix": "If keeping the non-summarized build, drop or soften the summary-specific distinctness paragraphs (corpus lines 67-71) and lean only on the next-hop-identical-recursion argument, which the config genuinely supports."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "no_op twin's change_target is the NON-edited-in-bypass ABR, which is correct for inertness but means the bypass and no_op twins for a given knob edit DIFFERENT nodes \u2014 a model could in principle learn 'edits to babr/the-losing-ABR = inert' as a positional shortcut rather than reasoning about which-ABR-wins.",
+          "fix": "No change needed given the cross-knob balancing; optionally note in the docstring that node-identity is deliberately balanced across knobs so the calibration cannot be gamed positionally."
+        }
+      ]
+    },
+    {
+      "family": "nexthop_elim",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "FALSE-QUIET CHECK PASSED: the next-hop-unresolvability invalidation mechanism IS modeled by the pinned Batfish digest on this FRR surface; the oracle does NOT silently return empty for the bypass twins.",
+          "fix": "None \u2014 this is the result the gate must confirm. Mechanism is genuinely gradeable."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Committed GT matches the actual oracle output value-for-value across all 4 combos.",
+          "fix": "None."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "DETERMINISM holds: strict single best-path decided at the MED step (PRE) / sole-resolvability (POST), before the router-id/age tiebreak; no ECMP tie so D5 stays empty in both snapshots.",
+          "fix": "None for the scenario."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The determinism harness compute_extended_with_determinism_check is susceptible to a transient Batfish snapshot-init race under tight re-init loops, which can spuriously raise as if non-deterministic.",
+          "fix": "Wrap the per-run compute in compute_extended_with_determinism_check (extended_oracle.py:599) with a bounded retry on transient BatfishException (re-init + re-query) before counting it as a divergence; the committed artifact already passed its own check so the family is unaffected."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "MED comparison here is the legitimate same-first-AS case (RFC 4271 9.1.2.2), NOT the unmodeled always-compare-med landmine.",
+          "fix": "None."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The next-hop-self construct is rendered as a non-idiomatic outbound route-map `route-map NHS_OUT permit 10 / set ip next-hop <OWN-loopback>` instead of the idiomatic `neighbor <src-lo> next-hop-self`. For the EBGP-learned re-advertisement modeled here (way/alt eBGP-learn the customer /24 from dst and re-advertise over iBGP), the textbook-idiomatic construct on real FRR/IOS is plain `next-hop-self` \u2014 the `set ip next-hop <own-lo>` route-map workaround is idiomatic mainly for the RR-REFLECTED (iBGP-learned) case, not this eBGP-learned case.",
+          "fix": "This is a gradeability-forced, transparently-documented substitution and is operationally valid, so it should NOT be changed (bare next-hop-self would silently no-op and break the oracle). But the docstring/prose should explicitly flag to the model-under-test that the rewrite is achieved via an outbound `set ip next-hop <own-lo>` route-map (it already does, line 78-79), and the benchmark write-up should note this is a model-fidelity compromise: a model reasoning about classic `next-hop-self` removal must instead read an unusual route-map. No code change required."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The oracle artifact records `determinism_10x: true` only for the two bypass combos (s500, s502); the two no_op combos (s501, s503) carry `pure_ok: true` and empty ground truth but no explicit `determinism_10x` field.",
+          "fix": "No action needed \u2014 the no_op ground truth is empty across all 10 dimensions, and byte-stability of an empty result is trivially deterministic; the winner (way, MED-strict) never moves because the edit hits the already-losing alt. Optionally add the 10x byte-identical check to the no_op combos for symmetry/completeness in the artifact."
+        }
+      ]
+    },
+    {
+      "family": "redistribute_ad",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The mechanism depends on a NEW Batfish-FRR capability (redistribute bgp route-map under router ospf + OSPF-110-evicts-iBGP-200 cross-protocol AD arbitration) that is NOT recorded on the verified-facts landmine/capability list, yet the family was committed on its strength.",
+          "fix": "Add a verified-facts line to knowledge/corpus/batfish/batfish_verified_facts.md: 'redistribute bgp route-map <rm> under router ospf IS parsed+modeled on digest 09817554db90; the resulting ospfE2 route (AD 110) evicts an iBGP copy (AD 200) of the same /24 in the FRR main RIB, while the iBGP route stays BEST in bgpRib. Re-verify on any digest bump.' This converts an undocumented dependency into a pinned, re-checkable fact."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Determinism rests on a strict 110-vs-200 AD gap and a single installed route, but the OSPF-E2 metric (observed 20) is not asserted distinct from any competing intra-area cost in the generator's determinism contract \u2014 if a future seed/topology change introduced an equal-cost second OSPF copy it could silently become ECMP (D5) and reach the router-id tiebreak trap.",
+          "fix": "No change required for the current 4 combos (single redistributor => single E2 copy by construction). If the generator is ever extended to let both way and alt redistribute, add an explicit nh-count==1 assertion in the determinism spec, mirroring the ospf-summary generator's strict-gap guard."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "BGP best-path is still BEST in src's BGP-RIB post-change \u2014 I empirically confirmed this (the 'quiet' signature: BGP is unaware it lost the RIB install to OSPF). The generator does NOT wire bgp_watch_prefixes, so D9 is not actively asserted-empty by the oracle; it just defaults to [].",
+          "fix": "Optional hardening: set bgp_watch_prefixes=[customer_prefix] so the oracle AFFIRMATIVELY scores D9=empty (BGP-best unchanged) rather than skipping it. This would make the 'BGP is blind to it' claim a graded negative control rather than an implicit one. Not blocking \u2014 the claim is true and verified, this only strengthens the artifact."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "Batfish returns the accepted trace 3x (identical nodeset) for the customer /32 probe. This is trace enumeration, NOT ECMP multipath, so the waypoint all-traces invariant and determinism are unaffected \u2014 but a reader could mistake the multiplicity for a redundancy signal.",
+          "fix": "No action needed; documenting so it isn't misread as multipath. The _waypoint_diff all() quantifier handles it correctly."
+        }
+      ]
+    },
+    {
+      "family": "community_lp",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "FALSE-QUIET GATE PASSES: Batfish on FRR fully models the community->LOCAL_PREF->best-path chain, so the committed D4/D10 GT is correct (not a false-quiet empty oracle). This is the gating concern and it is satisfied empirically.",
+          "fix": "None required. The family is fully gradeable batfish-static on the FRR surface."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Committed GT matches the oracle artifact AND my live re-run, byte-for-byte: bypass fires {intent,waypoint} only (base empty), no_op fires nothing (empty GT). is_trap is set correctly.",
+          "fix": "None. GT is exact."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "DETERMINISM confirmed: strict LOCAL_PREF gap in BOTH snapshots decides best path at RFC 4271 step 2, above the nondeterministic router-id/age tiebreak; no ECMP tie (D5 empty).",
+          "fix": "None. STATIC-DET satisfied."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "no_op inertness hygiene is sound: origin does not tag the route, set community is non-additive, and the alt edit touches a tag src's community-list never matches, so it provably cannot move best path.",
+          "fix": "None. The empty-GT calibration twins are genuinely inert."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The strict-no-tie property (no D5 ECMP / no router-id fallthrough) is ENGINEERED via alt's unconditional LP_MID baseline, not incidental to a captured-from-the-wild topology.",
+          "fix": "No code change needed. This is disclosed in the docstring and corpus and is realistic (Lumen/AWS per-uplink LP tiers). Keep the disclosure in any paper text so a reviewer knows the no-tie is by construction, and ensure the corpus war_story/analogous labelling stays (it currently does, corpus lines 56-64)."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "Per-seed bypass build gate covers only tag-stripping on way; it does not also assert POST LP fell strictly below alt, which the corpus modeling note (line 99-105) calls a non-optional Batfish pre-check.",
+          "fix": "Risk is low because LP_MID/HIGH/DEFAULT are fixed constants (150/300/100) with a guaranteed strict ordering independent of seed, and the committed oracle_verify_family23 artifact already confirms the firing for the shipped seeds (600/602). If new seeds are added to the question base, run the oracle_verify pass per seed (as was done here) rather than relying on the build-time string gate alone."
+        }
+      ]
+    },
+    {
+      "family": "community_trigger",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The 10x byte-identical determinism gate is applied ONLY to the bypass (is_trap) twins; the no_op (empty-GT) twins are validated single-shot (pure_ok + roundtrip_ok) with no explicit determinism check.",
+          "fix": "Optional: extend the 10x gate to the no_op twins for symmetry. Low priority -- an all-empty ExtendedBlastRadius has no path-dependent payload that could vary, and the no_op shares the identical strict-LP-gap topology (200>100, decided before any router-id/age tiebreak), so its key sets cannot be nondeterministic."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Determinism correctly relies on the strict LP gap being decided before the nondeterministic router-id/age steps; the proof rests on the LP tiers being literal constants (not seed-derived), which is the right choice but worth recording as the determinism anchor.",
+          "fix": "No change needed -- keeping the LP tiers as fixed constants (rather than seed-derived) is exactly what guarantees the strict gap in every instance. Recorded only as the determinism anchor a future editor must not break by randomizing these values."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The 'foreign/third-party attacker' framing is slightly loose: `dst` is the customer that ORIGINATES the /24 and tags its OWN outbound advertisement (normal customer signaling), not a non-customer attacker who must get a community to propagate through transit \u2014 which is the actual IMC-2018 abuse model the corpus cites.",
+          "fix": "Either (a) keep as-is \u2014 the load-bearing benchmark property (diff is on a node that is NOT the victim src; src's untouched latent term is what fires; blast radius is action-at-a-distance) is fully preserved and is the real intent \u2014 or (b) soften the docstring 'THIRD party' wording to 'the customer/foreign neighbor', since the attacker-vs-customer distinction does not change any GT or the decision-process attribution. No correctness impact."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The pinned-Batfish honoring of standard `set community additive` across the eBGP hops is asserted in the docstring as verified-live but is not recorded in the batfish_verified_facts KB, unlike other gradeability landmines.",
+          "fix": "Add a one-line entry to knowledge/corpus/batfish/batfish_verified_facts.md: 'standard BGP communities (community-list standard / match community / set community additive / send-community) ARE honored across eBGP on batfish/allinone:nethelm @ sha256:09817554db90; large/extended communities are NOT (rmm_large_community/rmm_extcommunity commented out of the FRR grammar)'. This pins the gradeability boundary so a future grammar bump can't silently turn this family false-quiet."
+        }
+      ]
+    },
+    {
+      "family": "far_as_prepend",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Docstring overstates 'exactly one best path / one trace at src'; Batfish actually returns 3 delivered traces per snapshot (flow-tuple replication of a single egress), not one.",
+          "fix": "Reword docstring lines 46-49 to say 'one EGRESS / one best path; Batfish replicates it across N identical flow traces' so a future reader does not mistake the 3-trace count for ECMP multipath. No code change needed."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The single-best-path / D5-empty claim is correct but rests on maximum-paths default 1 and a strict AS_PATH gap, not on Batfish refusing multipath; worth an explicit guard note.",
+          "fix": "None required; the strict-gap invariant is enforced by construction (bypass_times=pre+1 makes via-way = pre+2 > via-alt = pre+1, generator_far_as_prepend.py:411-417). Optionally add an assertion in the generator that the two AS_PATH lengths differ, to fail loud if a future axis edit ever creates an equal-length tie."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The docstring/code AS_PATH arithmetic uses a RELATIVE counting convention (counts only dst-contributed hops: 'via-alt = 1 + pre', 'way=1 vs alt=2') that does not match the ABSOLUTE AS_PATH length src actually sees, which also includes each upstream's own eBGP-export AS.",
+          "fix": "Optional: add one sentence to the docstring clarifying the counts are dst-contributed prepend hops (relative), not absolute src-observed AS_PATH length, to avoid confusing a config-reader cross-checking the numbers. No code change needed."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The bypass vs no_op prose names a DIFFERENT route-map (RM_TO_WAY_OUT vs RM_TO_ALT_OUT), which a model could in principle pattern-match.",
+          "fix": "This is acceptable and arguably correct: distinguishing 'prepend toward the current winner (flips)' from 'prepend toward the current loser (inert)' IS the best-path reasoning under test, not an outcome leak. No fix required; flagging only so the contamination/leak review is on record."
+        }
+      ]
+    },
+    {
+      "family": "med_far_as",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "MINOR_ISSUES"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Live-FRR idiomaticity gap is real but correctly disclosed: a deployed FRR config of this mechanism would carry `bgp deterministic-med`, which is stripped from the Batfish oracle snapshot because it is unparseable (PARTIALLY_UNRECOGNIZED) in Batfish's FRR grammar.",
+          "fix": "None required for the Batfish oracle. Only relevant if/when a live containerlab FRR validation is added for this family -- that config must re-add `bgp deterministic-med` to guarantee a single stable best path on real FRR (RFC 3345 oscillation risk otherwise). Keep the BUILD_V1.1 label until that live-FRR cross-check is run."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "D4/D10 are scored off the dataplane traceroute transit check (_accepted_traces), not off BGP best-path attributes directly -- so the oracle is validating that Batfish's COMPUTED FORWARDING moves, which is the strongest possible evidence, but it means the grade depends on traceroute startLocation resolving the src node.",
+          "fix": "No oracle change needed (production grades one scenario per compute call). If a batch determinism harness ever runs many scenarios against the shared 'netbrace_extended' network in one session, ensure each scenario re-inits pre/post (compute() already does via _setup) and does not interleave queries across scenarios."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The generator docstring asserts a factually WRONG reason for why Batfish compares the MED here: it claims the 'default \"compare MED only across same-neighbour-AS routes\" rule (RFC 4271 9.1.2.1; FRR default) applies WITHOUT always-compare-med ... (which IS modelled)' (lines 25-31) and 'the mechanism relies on the DEFAULT same-neighbour-AS comparison (which IS modelled)' (line 65). The repo's OWN source-verified KB states the opposite: knowledge/corpus/batfish/batfish_verified_facts.md:140 \u2014 'Batfish's BGP best-path comparator compares MED UNCONDITIONALLY across ASes, with no same-leftmost-AS gate. BgpRib.java:209 is a bare Long.compare(...). ... Batfish's default already behaves like always-compare-med.' So Batfish does NOT model the same-AS gate; the gate is simply satisfied trivially because this topology is single-neighbor-AS. The OUTCOME is correct, the stated MECHANISM-IN-THE-MODEL is contradicted by the project's own KB.",
+          "fix": "Rewrite the docstring to say: 'Both received paths carry the SAME neighbour-AS (single-provider dual-homing), so MED is comparable under BOTH the real RFC 4271 9.1.2.2(c) same-AS gate AND Batfish's permissive comparator (which compares MED unconditionally \u2014 batfish_verified_facts.md:140). The mechanism decides on the MED VALUE flip, NOT on a comparability-eligibility flip, so it is immune to the always-compare-med false-quiet NULL-oracle that kills comparability-lever mechanisms.' This removes the internal contradiction without changing any config or GT."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The docstring distinguishes this family from generator_lp/generator_igp_metric as a genuinely distinct cause-family, but at the BATFISH-MODEL level the discriminating numeric step (lowest-MED, a single Long.compare on metric) is decided the same way a comparable LP/cost numeric step would be; the ONLY thing making it MED rather than LP is the attribute name and decision-step order. This is fine for a config-READING task (the model must recognize MED semantics + the same-neighbor-AS honored-MED precondition), but a reviewer may ask whether D4+D10-pure-quiet via {MED, LP, IGP-cost} is three mechanisms or one mechanism with three knobs.",
+          "fix": "In the paper, frame the MED/LP/IGP-cost trio explicitly as 'same quiet D4+D10 signature, three DIFFERENT decision-process steps the model must reason about' (decision-step diversity), and note the honored-MED single-provider precondition is the unique reading-difficulty MED adds over LP. No code change."
+        }
+      ]
+    },
+    {
+      "family": "remove_dead_prepend",
+      "net": "MAJOR_ISSUES",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "MINOR_ISSUES",
+        "design": "VALID"
+      },
+      "confirmed": [
+        {
+          "severity": "major",
+          "lens": "oracle",
+          "claim": "The docstring's central 'design crux' \u2014 that way+alt must share one upstream AS so the latent MED is COMPARABLE because 'MEDs are compared only when the first AS in the AS_SEQUENCE matches' (generator_remove_dead_prepend.py:16-18, 62-66, 99-103) \u2014 is factually wrong for the pinned Batfish digest.",
+          "fix": "Correct the docstring: state that the same-upstream-AS design is for REAL-router realism (RFC 4271 \u00a79.1.2.2(c)), but that in the pinned Batfish model MED is compared unconditionally (KB-verified), so the mechanism's gradeability does NOT depend on the same-AS gate. Outcome is unaffected (both paths share first AS anyway and the strict MED gap 200>50 picks alt either way) \u2014 this is a rationale/doc fix only, not a GT change.",
+          "verify": "CONFIRMED",
+          "reasoning": "Independently reproduced from primary files. The reviewer's CLAIM is correct and precisely sourced: the docstring (lines 16-18, 60-66, 99-103) states the same-upstream-AS design is what makes Batfish compare the latent MED, and line 102-103 goes further than the reviewer cited \u2014 it claims \"the same-first-AS comparison Batfish DOES do is what is exploited.\" The project's own KB (batfish_verified_facts.md:140), verified against batfish@master BgpRib.java:209, says the opposite: Batfish compares MED unconditionally, with no same-leftmost-AS gate, behaving like always-compare-med by default. The same-AS precondition the generator engineers is therefore moot IN BATFISH. The reviewer did not misread.\n\nHowever the reviewer's FIX is also correct: this is a rationale/doc error, NOT a GT error. The oracle_verify artifact empirically confirms the committed ground truth is right (clean D4+D10-only quiet signature on both bypass twins, empty on both no_op twins, byte-deterministic 10x). Because both paths share AS_up by construction and the MED gap is strict (200>50), the best-path outcome is identical whether Batfish gates MED on the first AS or not. So the scenario is gradeable and grades correctly; only the explanatory prose is wrong.\n\nSeverity = major (not blocking): a hostile reviewer who knows Batfish internals \u2014 or who simply reads this team's own batfish_verified_facts.md \u2014 will catch a published artifact asserting a false statement about how the oracle works (\"the same-first-AS comparison Batfish DOES do is what is exploited\"). That is a credibility hit on a benchmark whose whole value proposition is oracle correctness, and it is the kind of one-line \"they don't understand their own tool\" rejection that sticks. But it does not invalidate or mis-grade any scenario, so it is not blocking. Not minor either: false claims about oracle mechanics in a correctness-critical benchmark are exactly what red-team exists to catch."
+        }
+      ],
+      "new_from_verify": [
+        "WIDER THAN THE REVIEWER STATED: the same false MED-gate premise has also leaked into the DETERMINISM CONTRACT, not just the realism rationale. generator_remove_dead_prepend.py:100-101 ties determinism to the gate ('The MED-set keeps the first AS = AS_up on BOTH paths so the comparison is eligible'), implying the determinism guarantee depends on the same-AS condition. It does not \u2014 determinism comes solely from the STRICT MED gap (200 vs 50, lines 138-139) resolving the best path at the MED step before the nondeterministic router-id/age tiebreak, which holds under Batfish's unconditional comparator regardless of AS. The doc fix must correct BOTH the realism rationale (16-18, 60-66) AND the determinism justification (99-103), or a reviewer will read the determinism contract as resting on a property Batfish doesn't have.",
+        "MIS-APPLIED CITATIONS: line 18 cites blog.ipspace.net BGP-MED-saga + Cisco doc 13759 as authority for the same-first-AS MED rule. Those sources describe REAL-router / RFC 4271 9.1.2.2(c) behavior, which is correct \u2014 but they are invoked to justify the BATFISH model's behavior, which contradicts them. The citations are fine as real-router realism support; they are evidence AGAINST the (false) Batfish claim, not for it. Fix: cite RFC 4271 9.1.2.2(c) for real-router realism and explicitly state Batfish (BgpRib.java:209) does NOT implement that gate (per batfish_verified_facts.md:140).",
+        "NO prompt-answer leak found: _description (498-520) names only which route-map clause is edited and the bypass/no_op verb difference is the substantive config-reading signal (delete-whole vs trim-one \u2192 equalize vs not), not an outcome leak; intents_text (523-528) does not reveal the post-change best path. No flaw here.",
+        "Distinct-mechanism claim holds: this is a genuine SUBTRACTION mechanism (delete prepend -> AS-path equalize -> latent MED decides) vs generator_lp's ADDITION mechanisms; batfish_verified_facts.md:126 independently classifies the elimination/subtraction form as distinct. Not a relabel. No flaw here.",
+        "Minor gameability note (family-wide, not unique here): the trap/no_op split is 50/50 per knob, so a model that pattern-matches 'remove whole clause = trap, trim one = safe' scores 50% by heuristic without best-path reasoning. The identical sentence shape and shared waypoint intent are the intended mitigation, but the metric should be reported as recall-where-truth on the trap half (per the project's own grader_artifact_d7 lesson), not raw accuracy across both twins, or the calibration twin inflates apparent skill."
+      ],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The docstring (lines 37-45, 100-103) asserts the post-equalization winner is decided 'by a STRICT MED gap (NOT router-id)', while the family's own corpus file (load_bearing_prepend_cleanup.md:25-36) warns the naive 'prepend-on-alt, waypoint=way' build resolves on compareReceivedFrom/originator (router-id-like) and is a NO-OP. The two docs read as contradictory.",
+          "fix": "Add a one-line note in the corpus file or docstring clarifying that this family AVOIDS the router-id-tiebreak no-op by inserting a strict MED discriminator above router-id, so the corpus's earlier warning is superseded for this specific build. Avoids future-reader confusion."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The committed GT artifact claims it was computed against the pinned digest batfish/allinone:nethelm @ sha256:09817554db90, but the Batfish container actually running on this host is batfish/allinone:latest. My confirming re-run therefore used latest, not the pinned digest.",
+          "fix": "Either pin the running container to sha256:09817554db90 (CLAUDE.md determinism gate) and re-stamp, or update the artifact's oracle_digest to the image actually used. Re-run scripts/verify_determinism.py against the pinned digest before the GT ships in the paper. Non-blocking: outputs were identical on latest, but the provenance line should not assert a digest the host isn't running."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The oracle's correctness here depends on a Batfish quirk, not on the docstring's stated MED-eligibility precondition: Batfish compares MED UNCONDITIONALLY across ASes (no same-leftmost-AS gate), so the docstring's careful same-AS_up construction (lines 16-18, 99-104) is not what makes the oracle fire. It happens to ALSO be real-FRR-correct (both paths' leftmost AS = AS_up, so real FRR would compare MED too), so this is robustness, not a bug.",
+          "fix": "No code change needed. Optionally add one line to the docstring noting that Batfish compares MED unconditionally (so the same-AS construction is for real-FRR fidelity, not oracle correctness) \u2014 this is the inverse of the false-quiet trap that kills always-compare-med-eligibility scenarios, so it is worth stating that the trap does NOT apply here precisely because the diff equalizes AS_PATH rather than toggling MED eligibility."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The corpus grounding file (load_bearing_prepend_cleanup.md) is internally STALE relative to this generator: its 'Mechanics corrections' (lines 25-40) describe a router-id/received-from resolution and assert the 'prepend-on-alt, waypoint=way' build is a NO-OP, whereas the shipped generator resolves at MED (strict 200/50 gap) and is NOT a no-op. A reviewer reading both could think the generator contradicts its own corpus.",
+          "fix": "Update load_bearing_prepend_cleanup.md to record the MED-gap build as the canonical (V1.1) form that supersedes the router-id build, and explicitly state that adding a strict MED discriminator both (a) makes prepend-on-alt/waypoint=way a real reroute and (b) resolves the decision before the nondeterministic router-id step. Keep the old note as a 'why the naive build fails' caution. noc-veteran curates."
+        }
+      ]
+    },
+    {
+      "family": "rr_bestpath",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Generator docstring claims rr reflects to src via an outbound `set ip next-hop` route-map pass-through, but rr has NO outbound route-map at all.",
+          "fix": "Reword line 78 to 'rr reflects its single best to src with the path NEXT_HOP carried unchanged via DEFAULT iBGP passthrough (no outbound route-map on rr).' Behavior is already correct and live-verified; this is prose-only so it cannot mislead a reviewer reading the mechanism."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Faint positional tell: for a fixed knob, the no_op edits the opposite rr interface from the bypass.",
+          "fix": "Across the full 4-combo family the tell self-cancels (eth2 appears as both a bypass and a no_op; eth3 likewise), so there is no family-wide 'ethN => trap' signal. No action required for v1; if hardening, vary the baseline cost values per seed so the edited interface is not a stable discriminator. This is weaker than the community_lp positional tell already noted in tests/unit/test_generator_family23.py and does not affect gradeability."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "Mechanism attribution to RFC 4271 \u00a79.1.2.2 interior-cost step is CORRECT, not mis-attributed. At rr the two customer-/24 paths are genuinely attribute-tied through every prior decision step, so best-path truly falls through to the IGP-metric tiebreak \u2014 the exact step the one-line edit flips.",
+          "fix": "No fix needed. Optionally, the docstring could note explicitly that the eBGP-over-iBGP filter step (RFC 4271 \u00a79.1.2.2) is a no-op here because BOTH rr paths are iBGP \u2014 this is the reason the decision legitimately reaches interior cost rather than terminating earlier."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The route-reflector framing is structurally valid and load-bearing for the PURITY claim (src has exactly one path -> D5=\u2205), but it is NOT load-bearing for the D4/D10 outcome itself, which is pure hot-potato at rr's IGP-metric step. A reviewer could argue the decisive flip is a vanilla hot-potato reroute that would occur with rr as a plain iBGP transit too.",
+          "fix": "No change required \u2014 the docstring (generator_rr_bestpath.py:7-15,52-57) already states this distinction honestly (the RR is what makes src a single-path client and keeps D5 empty). Keep the framing; the RR is genuinely load-bearing for the quiet signature even if the bypass itself is hot-potato-driven."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "no_op twins are truly inert and is_trap is labeled correctly; the determinism gate is satisfied for both bypass combos.",
+          "fix": "None."
+        }
+      ]
+    },
+    {
+      "family": "agg_collapse",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "D9 (BGP-RIB withdrawal) is correctly left empty, but the steering /25 DOES genuinely leave src's BGP-RIB-best set post-change, so the empty D9 is a deliberate watch-set exclusion, not a structural impossibility. A future editor who adds the /25 to bgp_watch_prefixes would make the scenario loud on D9.",
+          "fix": "No change needed now. Add a one-line guard/comment at generator_agg_collapse.py:511 noting the /25 must NEVER enter watched_prefixes or bgp_watch_prefixes, since it genuinely withdraws from BGP-RIB-best and would convert this into a loud D2/D9 scenario."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The pinned-digest claim 'Verified live 2026-06-15' for summary-only-modeled / suppress-map-NOT-modeled (docstring lines 84-86) has no committed module-validation note in the KB (batfish_verified_facts.md has no aggregate/summary-only entry).",
+          "fix": "noc-veteran/industry-expert should add a one-line entry to knowledge/corpus/batfish/batfish_verified_facts.md: 'aggregate-address ... summary-only DOES suppress contributors in FRR/CUMULUS_CONCATENATED on digest 09817554db90 (D4/D10 gradeable); aggregate-address ... suppress-map is PARSED but selective suppression NOT modeled (would false-quiet) \u2014 verified 2026-06-15.'"
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The probed customer host 203.0.113.1/32 is literally dst's connected dum0 interface address (203.0.113.1/24).",
+          "fix": "None required. The host being a real connected/originated address is exactly why D3 reachability stays intact (it answers via the /24 over alt). Harmless and arguably more realistic; flag only so a reader does not mistake it for a phantom destination."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "Docstring asserts suppress-map is 'PARSED but selective suppression NOT modeled' on the pinned digest, justifying use of summary-only instead.",
+          "fix": "No change needed for THIS family (it correctly uses summary-only, which I verified IS modeled). Keep the suppress-map exclusion. If any future variant adds a suppress-map axis, re-verify on the pinned digest before committing GT, since unmodeled selective suppression would silently fail to fire (false-quiet)."
+        }
+      ]
+    },
+    {
+      "family": "clause_fallthrough",
+      "net": "VALID",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The trap/no_op distinction is positionally leaked in the prose: the bypass (trap) edit ALWAYS names clause `permit 10` and the no_op ALWAYS names clause `permit 5`. generator_clause_fallthrough.py:548 (`seq = 10 if effect == \"bypass\" else 5`) hard-wires this into _description, so all four rendered descriptions differ only by the seq number (delete-bypass='remove clause permit 10', delete-no_op='remove clause permit 5', etc. \u2014 confirmed live, seed 700).",
+          "fix": "Not an oracle/gradeability defect (the GT is correct regardless) \u2014 route to ml-eval/red-team. A model still cannot solve from the seq alone (clause 5 matches a sentinel ASN no route carries, clause 10 matches the way-path), so reasoning is still required; but to remove the tell, randomize the live clause seq per seed (and the decoy seq) so trap and no_op draw from the same seq distribution, instead of fixed 10 vs 5."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The committed oracle artifact (runs/oracle_verify_family23_20260615/clause_fallthrough.json) records `determinism_10x: true` only for the two bypass twins (lines 5, 62); the two no_op twins (s601, s603) have NO determinism_10x field, so the artifact does not document that the empty-GT calibration twins are themselves 10x-stable.",
+          "fix": "Optional: run compute_checked on the no_op twins too and record determinism_10x for completeness, so every shipped instance has an explicit determinism stamp. (Empty GT cannot non-deterministically populate, so this is documentation-only.)"
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "The PRE config converges to the claimed waypoint and the one-line diff causes the reroute via the CLAIMED decision step (AS_PATH length), with paths genuinely attribute-tied up to that step.",
+          "fix": "None required. Design is correct and the step-attribution is sound."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "Both no_op twins are TRULY inert and is_trap is labeled correctly; the resequence-bypass correctly shadows the live clause via first-match.",
+          "fix": "None."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "The AS_PATH access-list regex uses a Batfish-specific workaround form (`^<asn> ` literal space instead of the idiomatic `^<asn>_`), per the generator's own note (lines 330-336), because the pinned Batfish digest does not treat the trailing `_` as matching the inter-AS separator for long 4-byte ASNs.",
+          "fix": "Acceptable as-is (already documented in-code and oracle-verified). For durability, add a per-seed Batfish pre-check that the way-path matches AS_WAY in PRE (LP 300) before shipping each instance, so a Batfish re-pin that breaks `^<asn> ` matching would quarantine rather than silently produce a false-quiet GT. Route this regex-vs-Batfish fact to the KB (batfish_frr_gradeability_boundary) so other generators reuse the verified form."
+        }
+      ]
+    },
+    {
+      "family": "origin_code",
+      "net": "MINOR_ISSUES",
+      "reviewed": "2/2",
+      "lens_verdicts": {
+        "oracle": "VALID",
+        "design": "MINOR_ISSUES"
+      },
+      "confirmed": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "GROUNDING GAP: origin_code is the ONLY reroute family in the quiet-half catalog with NO dedicated knowledge/corpus/noc/*.md grounding file, while every sibling (as_path_prepend, community_driven, igp_metric, med_driven, nexthop_self, redistribution_ad, routemap_clause, ospf_summary, aggregate_summary, flowspec, drain_undrain) has one. grep for 'origin code/origin attribute/origin igp/origin incomplete' across the entire corpus returns ZERO hits.",
+          "fix": "Author knowledge/corpus/noc/origin_code_quiet_reroute.md grounding the network<->redistribute ORIGIN flip in a citable operational reality (e.g. an origination-refactor that quietly moved a best path), and rebuild the KB index. Until then this family is technically gradeable but fails the noc grounding gate.",
+          "verify": "CONFIRMED",
+          "reasoning": "The grounding gap is REAL and reproduced. But the reviewer over-rates it at MAJOR. Severity is MINOR, for three concrete reasons grounded in the artifacts:\n\n1. NOT MIS-GRADED / NOT UNGRADEABLE. runs/oracle_verify_family23_20260615/origin_code.json: VERDICT=PASS, all four combos pure_ok=true, roundtrip_ok=true, determinism_10x=true on the pinned digest sha256:09817554db90. Both bypass twins fire EXACTLY {intent, waypoint} (D4+D10) with sessions_lost/prefixes_lost/reachability_lost/bgp_withdrawals/redundancy_losses/forwarding_anomalies/scale_violations all []; both no_op twins fire COMPLETELY EMPTY with is_trap=false. The committed GT is correct and the quiet signature holds. A 'major flaw a reviewer hits' must be a real grading/validity defect; this is a missing provenance doc, which is a process-gate miss, not a correctness bug. Per the rubric (blocking=mis-graded/ungradeable; major=real flaw a reviewer hits in the artifact), a missing KB markdown is squarely minor.\n\n2. NOT YET IN THE QUESTION BASE \u2014 so the noc-gate has not actually been bypassed at publication. `origin_code` is referenced repo-wide ONLY by netbrace/tasks/safety/generator_origin_code.py and tests/unit/test_generator_family23.py. It is NOT imported by scenarios.py, NOT in build_generated_suite_multi (which still enumerates only ipc/leak/lp/scale), NOT in any results/paper artifact (grep of paper/draft/netbrace_tr.tex for ORIGIN tiebreak => empty). The CLAUDE.md gate is 'nothing ENTERS the question base without grounding' \u2014 origin_code has not entered it. The fix (author origin_code_quiet_reroute.md before it ships in a sweep) is exactly right and is cheap; the family is correct and the doc is a 1-hour write-up, not a redesign.\n\n3. The reviewer's own framing concedes the mechanism is real and necessary, the GT is gradeable, and only the doc is missing. That is the textbook definition of a minor/process gap, not a major reviewer-killer.\n\nThe FIX as written is correct and sufficient; severity is the only correction."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "RFC CITATION ERROR in the generator docstring: the ORIGIN tiebreak is repeatedly cited as 'RFC 4271 \u00a79.1.1 step 5' (and a 'step N' numbering scheme), but \u00a79.1.1 is Phase-1 LOCAL_PREF degree-of-preference, NOT the tie-break. The ORIGIN comparison lives in RFC 4271 \u00a79.1.2.2 'Breaking Ties (Phase 2)'.",
+          "fix": "Change all '\u00a79.1.1 step N' references to RFC 4271 \u00a79.1.2.2 (Breaking Ties, Phase 2), and drop the invented 'step' numbers (FRR/RFC do not number them). The oracle output is unaffected; this is docstring-only but it is a paper-bound correctness defect.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's RFC analysis reproduces exactly. \u00a79.1.1 is Phase-1 degree-of-preference (LOCAL_PREF); the ORIGIN/AS_PATH/MED/router-id tie-breaks live in \u00a79.1.2.2 \"Breaking Ties (Phase 2)\", which uses lettered items, not the \"step 2/4/5/6/7/8/9\" numbering the docstring invents. All five cited locations are present and wrong as described. So: CONFIRMED. BUT severity = minor, not major. This text is a Python docstring / code comment in a generator, not paper-bound prose, scenario text shown to a model, a figure, or any published claim \u2014 I grepped the TR and the bad cite is absent. It has zero effect on the oracle output, the ground truth, gradeability, scoring, or any reported number (the oracle JSON is PASS and byte-identical). A hostile SIGCOMM reviewer never opens generator_origin_code.py; the \"reader must know the RFC 4271 best-path order\" line (:14) is internal authoring rationale, not a published premise. The reviewer's own FIX note concedes \"this is docstring-only\" and \"the oracle output is unaffected\" \u2014 which is the definition of minor, not major. It becomes major the instant this prose is lifted into the paper, so it must be fixed before migration, but as committed today it is a contained code-comment correctness nit."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "GROUNDING GAP: origin_code is the ONLY reroute family with no dedicated knowledge/corpus/noc/ grounding file. Every sibling (med_driven, igp_metric, community_lp, as_path_prepend, redistribution_ad, nexthop_self, aggregate_summary, routemap_clause_fallthrough, ospf_summary, drain_undrain, flowspec, pbr) has one; origin_code has none. The only two corpus files that mention 'ORIGIN'/'incomplete' (noc/load_bearing_prepend_cleanup.md, noc/igp_metric_hotpotato_quiet_reroute.md) mention it only in passing, not as the documented mechanism.",
+          "fix": "Author knowledge/corpus/noc/origin_code_quiet_reroute.md grounding the mechanism in real operational reality: dual-homed/dual-originator customer prefix where redundant egresses originate the SAME prefix via INCONSISTENT methods (network vs redistribute static) -> ORIGIN-code asymmetry silently determines the primary path; a benign 'tune how this prefix is originated' edit flips it. Cite RFC 4271 9.1.1 step 5 (ORIGIN IGP<EGP<INCOMPLETE) and the well-known network=igp / redistribute=incomplete stamping (Cisco/FRR). This is a genuine config-hygiene failure (inconsistent origination across redundant originators), so grounding is both real and necessary -- the noc-veteran should own this file.",
+          "verify": "PARTIAL",
+          "reasoning": "I reproduced both halves of the claim from primary artifacts. The reviewer's cited grep evidence is factually wrong (17 hits, not 2), but the conclusion it was meant to support \u2014 no dedicated ORIGIN-code grounding file exists, and origin_code is the only reroute family lacking one \u2014 is true. The fix the reviewer proposes (author origin_code_quiet_reroute.md grounding inconsistent dual-origination network=igp vs redistribute=incomplete, cite RFC 4271 9.1.1 step 5) is correct and worth doing for realism/necessity. But the defect does not rise to major: grounding is not load-bearing on any score (not wired into generators), and the oracle ground truth is independently verified PASS/deterministic/pure-quiet. PARTIAL because the claim is real but the severity is inflated and the supporting evidence as written does not reproduce."
+        }
+      ],
+      "new_from_verify": [
+        "GAMEABILITY (major) \u2014 generator_origin_code.py:551-576 (_description) + 579-584 (_INTENTS_TEXT): the bypass diff ALWAYS adds/removes a config line naming the customer prefix (e.g. 'network 203.0.113.0/24' <-> 'redistribute static'/CUST_PL), while the no_op diff NEVER touches the customer prefix (it edits the OWN loopback /32 via redistribute connected) \u2014 and that exact customer prefix is printed verbatim in scn.intents_text ('customer space 203.0.113.0/24'). A purely syntactic heuristic 'does the patch add/remove a line mentioning the intent's prefix?' separates trap from calibration twin with 100% accuracy across 12 instances (seeds 600/700/800 x 4 combos; tested live, all 12 OK). A model needs zero understanding of ORIGIN codes, MED, or RFC 4271 best-path to pass the bypass/no_op discrimination \u2014 the calibration twin therefore tests nothing about second-order control-plane reasoning, which is the benchmark's whole thesis. Fix: make the no_op also edit the customer prefix's origination in a way that is genuinely best-path-neutral (e.g. swap network<->redistribute on the NON-deciding egress 'alt' in a state where ORIGIN does not change the winner), so the prefix-mention heuristic collapses.",
+        "DISTINCTNESS THINNESS (minor/major) \u2014 origin_code's POST best-path is resolved by the SAME Batfish unconditional-MED comparison (50<200, same neighbor-AS=AS_egr) that decides generator_med_far_as. The docstring is honest that 'the decision falls through to the MED step', but a hostile reviewer can argue the family has two members whose trap both turns on the identical latent MED 50<200 gap; origin_code's network<->redistribute swap is merely the trigger that UNMASKS the same MED discriminator med_far_as edits directly. At the config-reading-task level they differ (different lines/attribute), but at the oracle-mechanism level the final discriminator is shared. The 'hardest comparator in the catalog' / 'distinct construct' claim is weaker than stated; defensible only on the read-the-diff axis, not the routing-mechanism axis.",
+        "DISCLOSED-PROVISIONAL (not new, noting) \u2014 tests/unit/test_generator_family23.py:11-14 already flags that origin_code's diff bundles a SET_MED route-map removal with the ORIGIN swap and that 'whether the ORIGIN step vs a MED side-effect is the true cause needs the architect's eye -- treat as provisional'. My RIB dump partially resolves this: PRE is genuinely ORIGIN-decided (way igp wins with MED 200 > alt 50), POST is MED-decided (both incomplete). The MED 200/50 values are preserved on each egress across the diff. So cause attribution holds, but the test note's 'provisional' status is fair and should be cleared by the architect before the prose calls ORIGIN 'the decisive change'.",
+        "DISTINCTNESS / RELABEL RISK (major, and the more dangerous defect the reviewer MISSED): origin_code's own docstring (generator_origin_code.py:22-35) admits the FINAL discriminator in the bypass snapshot is NOT origin code at all \u2014 it is a 'latent strict MED' (way 200 vs alt 50). PRE the ORIGIN step decides; POST/bypass ORIGIN TIES and 'the decision falls through to the MED step ... alt's 50 < 200 wins.' So the routing OUTCOME the oracle scores (which path wins POST) is decided by the SAME same-neighbor-AS MED gap that med_far_as/med_driven uses. The ORIGIN swap is only the *enabling* edit (collapses the ORIGIN tie); the *deciding* attribute is MED. This makes the 'ORIGIN-code is a distinct mechanism' claim partially a relabel of the MED family \u2014 a hostile reviewer will say 'your origin_code trap is a MED trap with an extra step.' This is a real distinctness defect, not just a missing doc.",
+        "CONFOUNDED DIFF flagged by the family's OWN test file (major): tests/unit/test_generator_family23.py:11-15 documents that origin_code's bypass diff 'bundles a SET_MED route-map removal with the network<->redistribute-static ORIGIN swap; whether the ORIGIN step (vs a MED [step]) is the discriminator [is ambiguous].' If the model only needs to notice 'a route-map touching MED was removed' to flag the bypass, the family does NOT actually test ORIGIN-best-path reasoning \u2014 it tests MED-route-map reading, which other families already cover. The claimed 'reader must know RFC 4271 ORIGIN order' difficulty may be unreachable via a MED shortcut. This should be resolved (isolate the ORIGIN swap from any MED edit, or prove via ablation that the ORIGIN step is load-bearing) before the family ships.",
+        "POSITIONAL-TELL audit (context, not a new origin_code bug): the same test file (line 15) flags community_lp's no_op editing a DIFFERENT node than its bypass as 'a weak positional tell.' origin_code appears clean on this axis \u2014 its no_op edits the SAME edited egress's own loopback /32 (generator_origin_code.py:520-525), so the edited-node identity is not a tell. No flaw found here for origin_code specifically.",
+        "Prompt-hygiene leak check PASSES for origin_code: _description() (generator_origin_code.py:554-575) and _INTENTS_TEXT name only the config construct (network<->redistribute swap, 'tune how this prefix is originated') and never the outcome; test_prompt_hygiene_no_outcome_leak (test_generator_family23.py:139-145) lints against bypass/reroute/wins/loses/best-path/etc. No answer leakage via prose. No flaw found here.",
+        "RESOLVED a flagged worry, not a new defect: tests/unit/test_generator_family23.py:11-14 warns that origin_code's bypass diff 'bundles a SET_MED route-map removal with the network<->redistribute swap' so the true cause (ORIGIN vs MED side-effect) is 'provisional'. I rendered the actual bypass patch (seed 600, way_to_incomplete): the MED is NOT removed \u2014 `set metric 200` is preserved, merely relocated from outbound route-map SET_MED_WAY to the redistribution route-map REDIST_CUST. PRE and POST both carry MED=200 on way's customer advertisement, so MED cannot be the cause; the only routing-relevant delta is ORIGIN igp->incomplete. The mechanism claim is sound and the architect's provisional flag can be cleared. Worth updating the test-file NOTE so it stops casting doubt.",
+        "MINOR gameability cue in the no_op twin: the no_op description (generator_origin_code.py:570-576) explicitly says 'swap the router's OWN loopback /32 origination' while bypass says 'swap the CUSTOMER prefix's origination'. A model can classify no_op as inert purely by lexically noticing 'own loopback /32' != 'customer prefix', without performing any ORIGIN/best-path reasoning the family claims to test. This is intrinsic to the no_op-must-touch-an-irrelevant-prefix design and is a legitimate distinguishing signal, but it is a surface lexical tell rather than the deep comparator reasoning advertised \u2014 not blocking, worth noting for the gameability ledger.",
+        "POSITIVE distinctness check (no defect): unlike community_lp (test-file line 15-16 flags it edits a DIFFERENT node in no_op vs bypass = positional tell), origin_code's bypass and no_op BOTH edit the same node (node2 / the change target) with the same construct kind (network<->redistribute swap). No positional/structural tell separates the twins. This family is cleaner than community_lp on that axis.",
+        "STYLE inconsistency (nit): in the `network` origination path the MED is stamped via an OUTBOUND neighbor route-map (`neighbor X route-map SET_MED_WAY out`, line 420), but in the `redistribute static` path it is stamped during redistribution (origin-side, line 399-400). Both yield MED=200 on the wire and Batfish confirms byte-identical strict GT, so functionally inert, but the asymmetric MED-application style is an idiomatic wrinkle the architect may want to normalize.",
+        "DISTINCTNESS-IS-THIN (major, NEW): origin_code's FINAL discriminator is the SAME same-neighbor-AS MED gap (way MED 200 vs alt MED 50) as the med_far_as family. The origin_code docstring itself admits this (generator_origin_code.py:30-32 'the decision falls through to the MED step... alt 50 < 200 wins'). med_far_as.json and origin_code.json fire IDENTICAL dims on identical trap structure {intent,waypoint}, empty otherwise, same seed scheme s600-603. The ONLY difference is the TRIGGER: origin_code reaches the MED step by tying ORIGIN via a network<->redistribute swap, while med_far_as edits MED directly. A hostile reviewer will call origin_code a med_far_as reskin with an extra ORIGIN preamble, not an independent mechanism. Defensible ONLY if the catalog explicitly frames origin_code as 'same outcome reached via a different, deeper attribute the model must reason two best-path steps into' AND the grounding doc justifies inconsistent-origination as a distinct real failure mode (precisely what the reviewer's proposed file would do \u2014 so the grounding gap and the distinctness thinness are the SAME wound).",
+        "MED-GAP REALISM (minor, NEW): the latent MED values (way=200, alt=50) are generator-injected purely to force a deterministic single best path before router-id (avoid the ECMP/D5 + nondeterministic-tiebreak trap). In the claimed real-world story (two redundant originators of one customer prefix) there is no operational reason the two egresses would carry a 150-unit MED spread that the operator is unaware of; it exists to make Batfish deterministic, not because it is realistic. A reviewer asking 'where does this MED gap come from operationally?' has no answer in the configs. Grounding doc must justify the latent MED or the scenario looks engineered-for-the-oracle.",
+        "NO ANSWER-LEAK FOUND (clearing): _description() (generator_origin_code.py:551) describes only the edit ('swap network<->redistribute static'), never that it bypasses the waypoint; the trap and no_op descriptions are construction-parallel ('one-construct origination-method change') so the model cannot separate trap from no_op by wording. _INTENTS_TEXT states the waypoint requirement (the question) not the answer. Clean.",
+        "NO FALSE-QUIET LANDMINE (clearing): docstring claims it does NOT emit always-compare-med/deterministic-med (the unmodeled-on-FRR knobs); grep confirms zero emission. It correctly relies on same-neighbor-AS MED which the pinned digest DOES model. determinism_10x=true proves the decision resolves before the nondeterministic router-id step. No gradeability trap here."
+      ],
+      "refuted_count": 1,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The mechanism's POST-bypass discriminator (same-neighbor-AS MED) relies on Batfish's default behaving like always-compare-med (BgpRib.java:209 bare Long.compare, no same-AS gate). This is the INVERSE of the known always-compare-med false-quiet landmine and is the correct way to exploit it, but it is fragile to a future Batfish version that implements the RFC \u00a79.1.2.2(c) same-AS MED gate.",
+          "fix": "No action needed for the pinned digest. If/when the digest is bumped, re-verify the POST best path still selects the MED-50 path (it should, since same-AS MED is legal under any RFC-correct comparator). Pin holds the risk to zero today."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "PRE state sets the customer MED via an OUTBOUND neighbor route-map (SET_MED_WAY out) that also stamps the loopback /32, whereas POST stamps the MED via the redistribution route-map matched to the customer prefix only. The loopback's MED therefore changes across the bypass, but the loopback is a D2 negative-control and does not affect the D4 decision.",
+          "fix": "Optional cosmetic: scope the PRE outbound MED route-map with a prefix-list match too, so PRE/POST differ ONLY in origination method. Not required \u2014 oracle is correct and the loopback is a control prefix."
+        },
+        {
+          "severity": "minor",
+          "lens": "design",
+          "claim": "REALISM DISCLOSURE: the PRE waypoint adherence is held up by the ORIGIN code MASKING a latent MED that is set BACKWARDS relative to intent. The intended-primary `way` carries the HIGHER MED (200) while the bypass `alt` carries the LOWER (50). In real design, if `way` is meant to be primary its MED should be the lower one; here PRE 'way wins' survives ONLY because ORIGIN (a higher-priority step) overrides a MED that actually prefers the bypass. That is a contrived/fragile config, not an idiomatic real-world primary/backup MED layout -- it is a synthetic stress construct.",
+          "fix": "This is acceptable AS a quiet-reroute trap (the point is a latent landmine), but it must be DISCLOSED in the grounding file so reviewers do not read it as a claimed idiomatic design. State explicitly: 'this is a synthetic worst-case where ORIGIN is the sole guardrail over a misordered MED; the realistic analog is two egresses with inconsistent origination methods, and the MED backwardness is what makes the reroute silent.' Optionally add a note that real operators avoid this via consistent origination + MED-aligned-with-intent."
+        },
+        {
+          "severity": "nit",
+          "lens": "design",
+          "claim": "no_op twin changes the edited egress's OWN loopback ORIGIN from igp (network <lo>/32) to incomplete (redistribute connected route-map). This is correctly inert in-model (loopback is single-sourced, no competing path -> ORIGIN irrelevant), but the loopback /32 IS in the D2 watched negative-control set, so the no_op leans on Batfish modeling a single-source-prefix ORIGIN change as a no-op. Verified empirically inert (oracle fires []), but it is a slightly more subtle inertness than a pure attribute-untouched no_op.",
+          "fix": "No action required -- empirically inert and labeled is_trap=False correctly. Optionally note in the docstring that the no_op's loopback ORIGIN flip is inert specifically BECAUSE the loopback is single-sourced (so the reader understands why igp->incomplete on a watched prefix is genuinely empty GT)."
+        }
+      ]
+    }
+  ],
+  "loudSummaries": [
+    {
+      "family": "leak_ms_reroute",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "No dedicated oracle_verify artifact is committed for the ms_reroute variant; the only leak artifact (runs/run_ext_leak_ms_fake/score.json) is the ms_blackhole flavor (D3+D7 fire). The committed VERIFIED-GROUND-TRUTH note (generator_leak.py:62-72) is the only record of the reroute GT, dated 2026-06-10.",
+          "fix": "Commit a runs/oracle_verify_leak_*/ artifact for the three ms_reroute scopes (per-dim key sets + 10x determinism), the same way family1/family23 generators have one, so the reroute GT is reproducible from a committed file and not just a docstring note."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The audit-prompt expectation that 'each generator emits a no_op/calibration twin with COMPLETELY EMPTY ground truth' does NOT hold for generator_leak: every emitted instance is is_trap=True (generator_leak.py:583); there is no empty-GT twin.",
+          "fix": "None required for correctness \u2014 but note in the catalog that generator_leak is the trap-only ORIGINAL n=6 headline; its calibration is the per-instance control-host flow, not a paired empty twin. Don't let a downstream balance check assume a leak no_op twin exists."
+        }
+      ]
+    },
+    {
+      "family": "lp_waypoint",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "TWO live code paths share the lp_waypoint name and the task names BOTH; one is explicitly deprecated by the other. The all-eBGP generator (generator_lp.py:5-12) was created as the audit-mandated fix (M3) for the hand-authored baseline (baseline_lp_waypoint.py + scenario_lp_waypoint.py) precisely because the baseline 'steers via STATIC routes to external /30 next-hops \u2014 a config no operator writes.' Both still ship and both grade correctly, but the baseline's src config carries `ip route 192.0.2.8/30 192.0.2.2` etc. (baseline_lp_waypoint.py:148-149) \u2014 a recursive-static next-hop crutch the generator deliberately eliminates.",
+          "fix": "Pick ONE for the published question base. Use the all-eBGP generator (generator_lp.py) as the canonical lp_waypoint instances; demote scenario_lp_waypoint/baseline_lp_waypoint to a clearly-marked legacy/demo fixture (or delete) so a reviewer does not see two configs claiming the same mechanism with one using a non-idiomatic static crutch."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "lp_waypoint fires D4 ONLY; it does NOT fire D10 (intent), so it does NOT match the project's stated 'QUIET/REROUTE signature: D4 + D10 fire while everything else is empty.' This is correct behavior \u2014 lp_waypoint is the first-order control, not a quiet-reroute trap \u2014 but the discrepancy should be stated so it is not mistaken for a missing-dimension bug.",
+          "fix": "No code change needed. In the catalog, label lp_waypoint as the D4-only first-order control (matches the task's own 'the control all models catch'), distinct from the D4+D10 quiet-reroute traps, so the missing D10 is documented as intentional."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Task note says 'Corpus grounding: NONE (no file)'. There is no DEDICATED lp_waypoint corpus file, but the mechanism IS grounded in committed corpus: the LOCAL_PREF risk-table row and the documented LLM failure both exist.",
+          "fix": "Cite network_change_management.md:18,79 as the grounding in the catalog entry; a dedicated lp_waypoint corpus file is not required for this canonical, well-documented D4 mechanism."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The prepend knob uses literal-ASN prepend syntax (`set as-path prepend <asn>`), which the generator docstring asserts Batfish parses while `last-as N` does not. I confirmed the literal-ASN form is parsed AND affects best-path live (the post AS_PATH lengthened and the best path flipped), so the choice is sound \u2014 but it depends on a Batfish behavior that is version-pinned.",
+          "fix": "Keep a unit/oracle regression that asserts the prepend knob still produces a strict AS_PATH-length gap and D4-only GT, so a future Batfish image bump that changes prepend parsing is caught (it would silently turn into a router-id-tiebreak determinism trap if the prepend stopped registering)."
+        }
+      ]
+    },
+    {
+      "family": "ipc",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Task framing says ipc has NO corpus grounding ('NONE \u2014 assess whether grounding is needed'); this is incorrect.",
+          "fix": "No fix needed for gradeability. Optionally add a one-line corpus pointer to generator_ipc.py's module docstring so the grounding is discoverable from the generator itself, not only the hand-authored templates."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "ExtendedOracle's default network name 'netbrace_extended' causes a Batfish work-queue/snapshot collision when many compute() calls reuse one network in-process (I reproduced 'Found no active locations matching rtrN' and duplicate-WorkID 400s on sequential reuse).",
+          "fix": "Not a GT-soundness defect for ipc (the committed sweep/determinism paths use unique per-scenario networks). To harden the single-shot callers (scenario_inventory.py:302, run_extended_scenario.py:126) that use the default, give ExtendedOracle a per-instance unique default network (e.g. network=f'netbrace_extended_{uuid4().hex[:8]}') so default usage cannot race."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The committed score.json artifacts under runs/run_ext_ipc_*_fake/ are FAKE-oracle scores, not live-Batfish oracle artifacts; a reviewer skimming them could mistake fake-1.0 for live verification.",
+          "fix": "Keep a committed LIVE oracle_verify artifact for the ipc family (parallel to runs/oracle_verify_family23_20260615/) capturing per-spec live GT + 10x determinism, so the family's gradeability is reproducible from a committed artifact rather than re-derived. The live values to record are exactly those I obtained: plain->D2+D3, static->D9, aggregate->D2(/25s)+D10 te_pin, all->multi-node D2+D3."
+        }
+      ]
+    },
+    {
+      "family": "scale_deagg",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [
+        "GAMEABILITY (major if unaddressed): margin x supernet_fate = 6 combos, but 4/6 (both over_clear + both over_marginal) have D8 FIRE and only 2/6 (under x {withdrawn,kept}) have D8 NOT fire. A trivial constant predictor 'D8 fires whenever the diff de-aggregates a supernet' scores 4/6 on the D8 axis without any counting. The `under` calibration trap only bites if it is sampled at >=~33% frequency. generator_scale.py picks margin via rng with no documented stratification guarantee that `under` is drawn proportionally \u2014 verify the sweep stratifies margin (esp. forces `under` instances) or the D8 detection number is inflated by a pattern-matcher. (Mitigated only if the harness enforces an even margin split; the generator alone does not.)",
+        "HARDENING GAP (minor): _installed_route_count (extended_oracle.py:199) and _init (line 113) have no reject-transient-zero/404 guard, and the in-sweep determinism gate is runs=2 (run_sweep.py:1047 default), below the doctrine's >=10. A transient empty routes() frame that recurs across both runs=2 calls would commit a false-quiet D8. A cheap, correct guard: treat a 0-row routes(nodes=node) frame as transient for any node that originates a /32 loopback (physically impossible to have zero installed routes), retry-then-raise. This closes the only real hole without changing GT semantics.",
+        "DOCTRINE INCONSISTENCY (minor): CLAUDE.md/oracle_determinism_spec_v1.md mandate >=10x byte-identical for any GT freeze, but the default sweep gate is compute_checked(runs=2). verify_determinism.py defaults to 10 but is a SEPARATE manual step, not wired into the freeze. If a GT is frozen straight from a sweep without the separate 10x gate, the effective determinism bar is 2x, not 10x. State explicitly which artifact is the canonical frozen GT and that it passed the 10x gate, or the reviewer's >=10 demand becomes a legitimate (separate) finding."
+      ],
+      "refuted_count": 1,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Docstring understates D2: scenario_scale_deagg.py and baseline_scale_deagg.py state D2 prefixes_lost = {(edge, 100.64.0.0/16)} (one row), but the actual live + fake-oracle GT is TWO rows \u2014 the /16 leaves BOTH the edge RIB AND the upstream RIB (upstream stops originating it).",
+          "fix": "Update the single-row D2 prose in baseline_scale_deagg.py:72-73 and scenario_scale_deagg.py:27 / test_scale_deagg_scenario.py:12 to {(edge,/16),(upstream,/16)} so the documented GT matches the computed/graded GT."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The audit framing's D4/D10 + med_far_as checks are inapplicable to this family and could mislead a future reviewer into expecting waypoint/intent GT here.",
+          "fix": "None needed for the scenario; note in the catalog that scale_deagg is a D8+D2 family so the reroute (D4/D10) gauntlet is N/A and the deterministic-med tiebreak concern does not arise."
+        }
+      ]
+    },
+    {
+      "family": "clos_summary",
+      "net": "MAJOR_ISSUES",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [
+        {
+          "severity": "major",
+          "lens": "oracle",
+          "claim": "fake_oracle structural GT for clos_summary disagrees with the live ExtendedOracle on the forwarding-anomaly NODE and omits the entire prefixes dimension.",
+          "fix": "In netbrace/reporting/fake_oracle.py clos_summary branch (line 236-238): set node to the dropping spine, not the source \u2014 emit anomaly|null_routed|node=spine2|... and ALSO add the 3 prefix keys (leaf1/leaf2/spine2 x 10.3.0.0/24) so the structural fake GT matches the live oracle. Then add a unit test pinning fake_ground_truth(clos_summary) == the live key set. Per CLAUDE.md rule 5 the live oracle is the source of truth, so the fake gate must mirror it or be explicitly excluded for this scenario.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's claim is fully and independently reproducible from primary sources with no disputed step. The source-vs-dropping-node confusion and the missing prefixes dimension are both real. I keep the reviewer's 'major' severity rather than upgrading to blocking because: although the buggy fake GT IS in a live code path (run_sweep --oracle fake), no paper-bound number is corrupted \u2014 every committed sweep manifest shows oracle=batfish (the live oracle), and per CLAUDE.md the fake oracle is an explicitly-non-reported structural calibration gate. So it is a genuine mis-grading bug a reviewer/CI hits, violating CLAUDE.md rule 5 (the structural gate must mirror the live source of truth), but it does not currently invalidate any shipped result. That is the definition of major, not blocking. The fix the reviewer prescribes is correct and necessary: emit node=spine2 plus the 3 prefix keys, and add a pinning test."
+        }
+      ],
+      "new_from_verify": [
+        "NO unit test pins fake_ground_truth(clos_summary) \u2014 test_run_sweep.py/test_generated_multi.py cover only ipc/leak/lp/scale generators + the 'ipc' flagship; every hand-authored _fake_handauthored branch (leak_ms, lp_waypoint, clos_summary, scale_deagg, mgmt_lockout) is unpinned, which is exactly why both the node bug AND the missing-prefixes bug survived. Add per-branch tests asserting fake_ground_truth == live key set (or explicit xfail).",
+        "LIKELY SECOND INSTANCE of the identical source-node bug: fake_oracle.py:226-228 leak_ms branch emits 'anomaly|blackhole|node={canon_node(s)}' using the flow SOURCE s, whereas for a route-leak blackhole the dropping node is the leaker (note the generator twin _fake_gen_leak:159 correctly uses `leaker`, not the source). Verify leak_ms's hand-authored fake GT against its live oracle \u2014 it is probably wrong-node too.",
+        "INVERSE-GAMEABILITY under the fake oracle for clos_summary: a model that gives the CORRECT live answer (spine2 null-routes 10.3.0.0/24; leaf1/leaf2/spine2 lose the /24) is scored WRONG against the buggy fake GT (FP on 3 prefixes, FP+FN on the forwarding node). The fix must close this inverted scoring.",
+        "No prompt leakage: runs/run_ext_clos_summary_fake/prompt.txt states the operator goal and shows the discard-/8 + suppress-specific diff but never names spine2 as the dropping node nor states a blackhole results \u2014 the model must reason the valley-path severance itself. No flaw here.",
+        "'Distinct mechanism' is genuine: eBGP per-device-ASN Clos summarization blackhole (RFC 7938 \u00a75.2.3 fixed-asymmetry instance) is structurally distinct from the iBGP leak and attribute-shift families \u2014 not a relabel."
+      ],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "No dedicated oracle_verify artifact exists for clos_summary, unlike the family1/family23/igp_metric scenarios which have committed signature+determinism JSON under runs/oracle_verify_*.",
+          "fix": "Commit an oracle_verify_clos_summary JSON capturing the live key sets (prefixes x3, forwarding null_routed@spine2, all other dims empty, is_trap=true) plus the >=2x byte-identical determinism flag, matching the artifact convention used by the other families. I captured these values live this session."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The audit brief asserted 'Corpus grounding: NONE (no file)' and framed clos_summary under the QUIET/reroute D4+D10 signature \u2014 both are inaccurate for this family.",
+          "fix": "No code change. Update the family routing note so this scenario is audited under the D7/D2 lens (forwarding-anomaly gradeability), not the QUIET/reroute D4+D10 lens; grounding requirement is already satisfied."
+        }
+      ]
+    },
+    {
+      "family": "mgmt_lockout",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "No committed live oracle_verify artifact for mgmt_lockout \u2014 the GT is frozen but only the FAKE run is committed as evidence.",
+          "fix": "Commit a live oracle artifact, e.g. runs/oracle_verify_mgmt_lockout_<date>/mgmt_lockout.json, capturing the ExtendedOracle.compute output + the 10x determinism PASS, mirroring the family1/family23 convention, so the frozen GT is auditable without a live container."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Docstring lineage over-claims the ipc/D9 relationship; mgmt_lockout does NOT fire D9 (no bgp_watch_prefixes declared).",
+          "fix": "Either add the two mgmt prefixes to bgp_watch_prefixes so D9 ALSO fires (strengthens the trap: the control-plane withdrawal is then a graded fact, distinguishing a model that sees the BGP-RIB change), or reword the prose so it doesn't imply D9 is the graded sibling-value here (the graded value is D3+D10 only)."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "Mgmt prefixes are deliberately excluded from WATCHED_PREFIXES so D2=empty \u2014 honest by the stated design, but it means the trap's core loss is invisible to a D2-only grader.",
+          "fix": "No change required (this is the intended design and is documented as honest). Optionally note in the catalog that the mgmt-prefix loss is intentionally routed to D3/D10 rather than D2, so reviewers do not read D2=empty as the prefixes surviving."
+        }
+      ]
+    },
+    {
+      "family": "blackhole",
+      "net": "MAJOR_ISSUES",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "MAJOR_ISSUES"
+      },
+      "confirmed": [
+        {
+          "severity": "major",
+          "lens": "oracle",
+          "claim": "The scenario docstring's MECHANISM is wrong: it claims the r1->10.0.0.4/32 iBGP path SURVIVES and the blackhole is a recursive-next-hop resolution failure of a live BGP route. In reality the r1<->r4 iBGP session DROPS, so r1 has no BGP path either.",
+          "fix": "Rewrite the docstring to state the real mechanism (static-route removal kills the loopback-sourced iBGP peering to 10.0.0.4, so r1 loses the BGP RIB entry too -> total route absence -> NO_ROUTE). Either keep it as a LOUD multi-dim scenario and document the full D1+D2+D3+D7 GT, or, to make it a true 'BGP path survives' blackhole, give r1 a SECONDARY path to 10.0.0.4 (e.g. ECMP static or peer via a directly-connected interface IP) so the session stays up while only the data-plane next-hop becomes unresolvable.",
+          "verify": "PARTIAL",
+          "reasoning": "The reviewer's technical claim is correct and I reproduced it independently from the primary files plus a live oracle run: removing the static route kills the loopback-sourced iBGP session r1<->r4 (D1), not merely a recursive next-hop. The docstring (scenario_blackhole.py:5-9,16) and the catalog (blast_radius_scenario_catalog.md:165-169, \"Dimensions: D7, D3\") both mischaracterize a 4-dimension (D1+D2+D3+D7) event as a data-plane-only blackhole and falsely assert other routers are unaffected.\n\nBut the reviewer over-rated it as blocking. Blocking in this rubric means INVALID/mis-graded/ungradeable GT. Here the graded GT is the live oracle output (which is CORRECT and already records the session loss in the committed determinism artifact), not the docstring; grading never reads the prose. And the scenario is not in the paper's results table, so no number is at risk. The damage is confined to false documentation/taxonomy. That is a major flaw (a reviewer reading the catalog/docstring will catch the contradiction with the oracle and question the authors' control-plane understanding), but it does not corrupt grading or any published result. Hence PARTIAL / major.\n\nFIX: rewrite scenario_blackhole.py:5-9,16 to state the real mechanism (loopback-sourced iBGP to 10.0.0.4 collapses because the removed static route was the only transport to the peer -> D1 x2 + D2 + D3 + D7), and correct blast_radius_scenario_catalog.md:165-169 to list D1,D2,D3,D7 instead of just D7,D3. If a true 'BGP path survives' recursive blackhole is wanted, give r1 a directly-connected/ECMP secondary route to 10.0.0.4 so the session stays up while only the data-plane next-hop becomes unresolvable."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The committed ground-truth artifact runs/demo_blackhole/ground_truth.json is STALE and contradicts the source-of-truth unified oracle: it asserts D7-only with an EMPTY base, but the live ExtendedOracle.compute emits a 4-dimension blast radius.",
+          "fix": "Delete runs/demo_blackhole/{ground_truth.json,summary.json} or regenerate them from ExtendedOracle.compute so any committed artifact matches the unified oracle. Do not ship a per-dimension demo helper's partial output labeled 'ground_truth.json'.",
+          "verify": "PARTIAL",
+          "reasoning": "The reviewer's factual core is fully reproducible: the artifact's base is empty + D7-only, while the unified compute emits a 4-dimension radius (D1+D2+D3+D7) with the exact session/prefix/reachability keys the reviewer named. The mechanism (recursive next-hop: removing `ip route 10.0.0.4/32 192.0.2.10` makes r1's iBGP peer 10.0.0.4 unresolvable, dropping the r1<->r4 session and the route) is consistent with baseline_square4 (neighbor 10.0.0.4 update-source lo). So the contradiction with Rule 5 is real.\n\nBUT the reviewer's severity (blocking) and framing are wrong on a decisive point: the artifact is gitignored and untracked \u2014 it is NOT a 'committed ground_truth.json.' It is local demo scratch produced by running a script, drives no grading (reviewer concedes orphaned), and is invisible to any paper reviewer. Nothing mis-grades, nothing ungradeable, no number depends on it. That makes this hygiene/cleanliness, not a blocking validity defect. blocking is reserved for INVALID/mis-graded/ungradeable per the rubric; this is none of those. Corrected: minor. The proposed fix (delete or regenerate via compute; never label a per-dim helper output 'ground_truth.json') is still correct and worth doing."
+        }
+      ],
+      "new_from_verify": [
+        "DOCSTRING SELF-CONTRADICTION: scenario_blackhole.py:16 says 'Verified live: PRE r1->10.0.0.4 ACCEPTED; POST NO_ROUTE' but reports ONLY the data-plane disposition, silently omitting that the verification run also showed two ESTABLISHED sessions dropping. The author either didn't look at the session count or selectively reported \u2014 undermines the 'DO NOT edit without re-verifying' trust model.",
+        "CATALOG TAXONOMY ERROR (blast_radius_scenario_catalog.md:165-169, S15): lists 'Dimensions: D7 (blackhole), D3' for the static/recursive-next-hop blackhole. Live oracle proves it is D1(x2)+D2+D3+D7. Any v2 work or reviewer cross-referencing this catalog inherits a wrong dimension label for the canonical 'blackhole' archetype.",
+        "CURRENCY/REPRO DRIFT: the running container is batfish/allinone:LATEST (docker ps), not the pinned :nethelm sha256:09817554db90 that CLAUDE.md says 'all ground truth is computed against'. The blackhole conclusion is robust to this (session loss is a hard topology fact), but every other oracle GT recomputed against :latest is off-pin and not reproducible against the committed digest \u2014 verify before trusting any fresh oracle numbers from this host.",
+        "MECHANISM-DISTINCTNESS RISK: this 'blackhole' is now mechanically the SAME class as a plain D1 session-loss + D2 prefix-loss scenario (it is a session drop dressed up as a forwarding anomaly). The D7 ForwardingAnomaly(kind='blackhole') is a redundant relabel of the same NO_ROUTE that already produces reachability_lost \u2014 i.e. D7 here double-counts D3 for the identical (node,prefix) pair, inflating element count. If the benchmark claims D7 is a DISTINCT dimension from D3, this scenario does not demonstrate that distinctness; it demonstrates D3==D7 on the same key.",
+        "DISTINCTNESS/DOUBLE-COUNT (major, internal-contract): blackhole_scenario() at scenarios.py:169-170 declares reachability_flows == forwarding_flows == bh.PROBE_FLOWS (the SAME flow set). The live unified oracle proves the single r1->10.0.0.4/32 NO_ROUTE event is scored TWICE: once as D3 base.reachability_lost ('reach|src=r1|dst=10.0.0.4/32') and once as D7 forwarding_anomalies ('anomaly|blackhole|node=r1|dst=10.0.0.4/32'). The project's OWN contract contradicts this: ipc_scenario() docstring at scenarios.py:220-223 states 'D7 deliberately not declared... declaring D7 would double-count the same effect under a second dimension.' So the repo holds two opposite positions on whether a NO_ROUTE is D3 or D3+D7. A macro-F1 over dimensions double-weights the same physical failure, inflating the apparent blast radius and reward for this scenario. Either D7 must add a signal D3 cannot (classification kind=blackhole + localization node=r1 \u2014 defensible, but then say so and don't also fire D3 over the identical flow) or it's a relabel of D3.",
+        "INTENT/PREFIX LEAK (minor, prompt-side): blackhole_scenario() description ('Remove r1's static route to 10.0.0.4/32 (looks redundant).') names the exact touched prefix, and intents_text ('All loopbacks must remain reachable from every node.') states verbatim the invariant the change breaks (10.0.0.4 is a loopback that becomes unreachable). A model can flag D2/D3 by string-matching 'remove route to 10.0.0.4' against 'loopbacks must stay reachable' with zero control-plane/recursive-next-hop reasoning \u2014 the very reasoning the scenario claims to test. Only the '(looks redundant)' clause is a counter-signal. This makes D2/D3 trivially guessable; the genuinely hard part (recursive next-hop -> D1 session drop + D7 blackhole classification) is what should be scored, not the literal-restatement D2/D3.",
+        "test_blackhole_scenario.py asserts the patch round-trips but NEVER asserts any ground-truth dimension values (it explicitly defers the live oracle to the demo script). So there is no committed test that pins the 4-dim radius. If a Batfish-modeling change silently zeroed D1 (false-quiet on session loss), no unit test would catch it \u2014 only the now-stale orphan artifact, which itself is wrong. The family has zero ground-truth regression coverage."
+      ],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Corpus grounding is mismatched to the actual mechanism.",
+          "fix": "Re-ground in an incident matching 'removed a static that a loopback-sourced iBGP/management session silently depended on' (loopback-reachability/management-plane dependency lore), or drop the microloop/Cloudflare attribution."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "intents_text and is_trap framing undersell the change as a localized cleanup.",
+          "fix": "Add a comment at the builder noting this is a LOUD scenario (D1 fires); confirm is_trap=False is intentional given the naive session-drop answer is correct."
+        }
+      ]
+    },
+    {
+      "family": "ecmp4",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "Brief states 'Corpus grounding: NONE (no file)'. This is inaccurate \u2014 the D5/ECMP-redundancy mechanism IS grounded in the corpus, just not under an ecmp4-named file.",
+          "fix": "No code change required. Optionally add a one-line pointer comment in baseline_ecmp4.py docstring citing dc/dc_summarization_ecmp_pitfalls.md and RFC 7938 \u00a76 so the grounding is discoverable from the scenario file. The simpler ecmp4 (static routes, not summary-collapse) is a deliberately minimal sanity anchor of the same grounded family."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The fake_oracle synthetic GT for ecmp4 emits a REACHABILITY key, while the real ExtendedOracle emits a REDUNDANCY key \u2014 the two oracles disagree on the active dimension for this scenario.",
+          "fix": "Harmless by design: fake_oracle.py:7-8 declares it 'NOT Batfish-accurate and must NEVER be used for a reported number' \u2014 it exists only to exercise sweep plumbing offline (--oracle fake), and ecmp4 is labelled a 'static-route sanity anchor' (line 256). No reported metric uses it. If exactness is desired, change the ecmp4 branch to emit ks['redundancy'].add('redundancy|node=src|vrf=default|prefix=10.0.0.4/32') to mirror the real GT, but this is cosmetic."
+        }
+      ]
+    },
+    {
+      "family": "waypoint4",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "waypoint4 is GRADEABLE on the pinned Batfish digest and the committed GT is CORRECT. The mechanism is pure static routing (ip route 10.0.0.4/32 192.0.2.2 -> 192.0.2.6 at baseline_waypoint4.py:85-87 / :218-223), fully modeled by Batfish and NOT on the FRR landmine list (no BGP/LP/MED/AS-path/PBR/VRF-leak/ADD-PATH/ECMP-hash, no PARTIALLY_UNRECOGNIZED line). No false-quiet risk.",
+          "fix": "None required for gradeability. GT confirmed correct against the live oracle."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "DETERMINISM confirmed. The D4 decision is a strict single-winner longest-prefix-match on a /32 static route in BOTH snapshots; it never reaches Batfish's nondeterministic router-id/path-age multipath tiebreak. No equal-cost/ECMP split (the 3 identical PRE traces and 3 identical POST traces are flow-disposition expansion of ONE path, not a split).",
+          "fix": "None."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The fake-oracle sanity gate for waypoint4 validates a DIFFERENT key-set shape than the real oracle, so 'fake gate scores 1.0' does NOT prove this scenario's real GT \u2014 only the sweep plumbing. The committed score.json (waypoint:tp=1) was produced from the REAL oracle / demo, not from this fake branch.",
+          "fix": "Either (a) leave as-is and rely on the live Batfish check (done here) as the real-GT proof \u2014 acceptable since fake is plumbing-only by design; or (b) align the fake_oracle waypoint4 branch to emit ks['waypoint'].add(...) so the offline gate exercises the same dimension the real oracle scores. Document explicitly that the fake gate does not validate waypoint4's real GT."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "No corpus grounding for the plain waypoint4 service-chain/inspection-node baseline. The task brief flagged this; my assessment: acceptable for a synthetic S18 sanity anchor but the catalog is weaker for it.",
+          "fix": "Add a short noc grounding note for the security/compliance blast-radius of silently bypassing a mandatory-inspection node via a routing change (firewall/IDS skip). Not blocking \u2014 this is a baseline demonstrator, not a question-base trap."
+        },
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "PROCESS TRAP (not a scenario defect): running the determinism gate against the SHARED Batfish coordinator with the DEFAULT network name 'netbrace_extended' and snapshot names 'pre'/'post' races against other concurrent fleet audits and produces transient FALSE non-determinism (404 'answer not found', duplicate-WorkID 400s, 'Found no active locations matching src').",
+          "fix": "Determinism/oracle runs must use a UNIQUE per-run network name (ExtendedOracle(network=...)) and serialize against other Batfish clients (or use a dedicated container). Route this to the KB so the fleet stops reading shared-coordinator races as scenario non-determinism. compute_extended_with_determinism_check should ideally retry transient HTTP 404/400 before declaring divergence."
+        }
+      ]
+    },
+    {
+      "family": "ospf_core6",
+      "net": "VALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "VALID"
+      },
+      "confirmed": [],
+      "new_from_verify": [],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "ospf_core6 is NOT a graded scenario: no REGISTRY entry, no scenario_/test_ companion, no oracle_verify artifact, and nothing imports the baseline. There is no committed D4/D10/is_trap ground truth that could be false-quiet-wrong. It is a documented CLEAN-KILL baseline kept only as a v1.5 foundation + config-format template for 7 graded generators.",
+          "fix": "None required. The honest negative result is correctly excluded from the graded set. If/when the v1.5 fix (separate data-plane next-hop from session loopback + engineered customer-attach SPOF, casestudy.md:40-48) lands and a scenario is registered, re-run this gradeability gate and produce an oracle_verify artifact before committing any GT."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "The audit-prompt 'QUIET/REROUTE D4+D10' signature does not describe ospf_core6. Its intended (killed) signature was D1=EMPTY + D2/D7 (a recursive-next-hop blackhole), a forwarding/prefix family, not a waypoint+intent reroute family. There is no waypoint or intent-invariant mechanism in any of the 6 configs.",
+          "fix": "Judge the D4/D10 reroute generators' gradeability in their own files; do not attribute a D4/D10 claim to ospf_core6."
+        }
+      ]
+    },
+    {
+      "family": "square4",
+      "net": "INVALID",
+      "reviewed": "1/1",
+      "lens_verdicts": {
+        "oracle": "MINOR_ISSUES"
+      },
+      "confirmed": [
+        {
+          "severity": "blocking",
+          "lens": "oracle",
+          "claim": "The generator's `remove_network` intent is a latent FALSE-QUIET trap: the v0 BatfishOracle that grades the square4 suite emits a COMPLETELY EMPTY blast radius for it, yet the change is a real 4-element D9 BGP-best-path withdrawal. It is mitigated ONLY because the shipped v0 suite is shut_neighbor-only; the generator default still includes it.",
+          "fix": "Do NOT ship remove_network through the v0 BatfishOracle path. Either (a) route remove_network through ExtendedOracle with bgp_watch_prefixes set so _bgp_withdrawn_diff (extended_oracle.py:222-237) catches the D9 withdrawal (live-confirmed: 4 elements), or (b) drop remove_network from generator.py:42 GenerationSpec.intents default and from _combos (generator.py:85-88) until the D9-aware oracle grades it. Add a regression test asserting remove_network GT is non-empty under the D9 oracle.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's load-bearing claim reproduces EXACTLY on the pinned digest: remove_network is a latent false-quiet trap. The v0 BatfishOracle grades only the MAIN RIB (oracle.py:83 routes()), the baseline's static routes (AD=1, beating iBGP AD=200) keep every loopback in the main RIB pre and post, and the v0 oracle has no BGP-RIB/D9 term \u2014 so removing `network 10.0.0.1/32` produces a genuine 4-element BGP-best-path withdrawal (live-confirmed via bgpRib BEST going [r1,r2,r3,r4]->[]) that the v0 oracle reports as ZERO blast radius. It is only mitigated because the shipped v0 suite is hand-trimmed to 12 shut_neighbor tasks; the generator DEFAULT still emits 4 remove_network tasks, and the standard generate(cli.py:14)->oracle(cli.py:36-58) workflow would commit 4 tasks with empty GT. Blocking: wrong ground truth committed = mis-graded by definition (Hard Rule: no wrong GT). Verdict CONFIRMED, not PARTIAL: the only error in the reviewer's text is a citation sloppiness \u2014 it says 'the cli.py:14 generate(GenerationSpec) path grades through BatfishOracle (cli.py:43)', conflating two distinct subcommands (_cmd_safety_generate at line 10-16 writes status='pending' and does NOT grade; grading is _cmd_safety_oracle at 36-58, where line 43 is the oracle constructor). That mis-description does not touch the substance, severity, or fix, all of which are correct. The fix (route remove_network through ExtendedOracle._bgp_withdrawn_diff with bgp_watch_prefixes set, OR drop it from generator.py:42 default + _combos until D9-aware, plus a regression test on non-empty GT) is sound and live-validated (4 elements)."
+        },
+        {
+          "severity": "major",
+          "lens": "oracle",
+          "claim": "docs/batfish_oracle_runbook.md states a falsifiable, empirically WRONG expectation for remove_network ground truth.",
+          "fix": "Correct runbook lines 307-312: state that remove_network leaves prefixes_lost EMPTY on square4 because the static-route backdoor keeps the prefix in the main RIB; the loss is a BGP-RIB-BEST withdrawal that requires the D9 ExtendedOracle term (bgp_watch_prefixes), not the v0 prefixes_lost diff.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer's claim is exactly right on mechanism, empirical result, and fix. I independently reproduced prefixes_lost=[] for remove_network on the pinned digest and proved the cause is the static-route main-RIB backdoor (prefix never leaves routes(), only leaves bgpRib()). The runbook self-contradicts: line 84 states the correct \"must disappear from RIB entirely\" rule and even hedges \"Verify this is the right behaviour\" (proof it was never verified), then line 311 asserts the opposite. This is a falsifiable, empirically wrong statement in a primary methodology doc.\n\nSeverity stays at major, not blocking, for one reason: NO remove_network task is committed with ground truth anywhere (only 12 shut_neighbor square4 tasks exist; grep of tasks/ for remove_network returns 0 task files; 0 _index.jsonl entries; not in the paper TR). So no SHIPPED ground truth is currently mis-graded -- the oracle, when it does run remove_network, computes the CORRECT prefixes_lost=[]. The defect is a wrong documented expectation that will mislead a human GT/kappa validator (the required hand-validation step) into either flagging the oracle's correct empty GT as a bug or 'fixing' GT to add a phantom prefix loss -- a real review hazard, and a reviewer reading docs vs results will catch the contradiction. That is squarely 'a real flaw a reviewer hits' (major), not a current INVALID/mis-grade (blocking). Not minor, because it is a falsifiable wrong claim in a methodology doc that directly governs ground-truth correctness review."
+        },
+        {
+          "severity": "major",
+          "lens": "oracle",
+          "claim": "Committed ground-truth records do NOT pin the Batfish engine digest, weakening the determinism/reproducibility provenance the project doctrine demands.",
+          "fix": "Populate oracle.engine_version with the pinned digest (batfish/allinone@sha256:09817554db90\u2026) at oracle-fill time, and add the running image digest to the determinism report header. This makes 'same configs -> same GT' auditable against a specific engine.",
+          "verify": "CONFIRMED",
+          "reasoning": "The reviewer is correct on every concrete particular and I reproduced it independently. engine_version=None on all 12 tasks; determinism report has no digest. This is a genuine reproducibility/provenance gap: the GT bytes are only valid against sha256:09817554db90 (per CLAUDE.md and the known FRR false-quiet landmines \u2014 a different Batfish build that recognizes/silently-drops a different config line set would change the committed GT), yet nothing in the committed task artifacts or the determinism header records that engine. A SIGCOMM/HotNets reviewer asking 'reproduce your ground truth' cannot bind the GT to an engine from the committed files.\n\nWhy major and not blocking: the GT VALUES themselves are not shown to be wrong by this defect (the square4 GT is a correct shut-neighbor result \u2014 sessions_lost only, zero prefix/reachability loss is right for a full iBGP mesh where each node still has 2 remaining route-reflector-free peers, no leak). The defect is provenance/auditability, not mis-grading. Blocking is reserved for INVALID/mis-graded/ungradeable GT; this is a reviewer-hits-it reproducibility flaw, which is exactly 'major'. The reviewer scored it major \u2014 confirmed at that severity, no inflation, no deflation.\n\nThe fix as written is sound and already half-implemented (oracle_digest exists in the newer artifacts) \u2014 it just needs to (a) populate schemas.py engine_version at oracle-fill by querying the live container digest, (b) add the digest to the determinism report header, and (c) back-fill the 12 shipped tasks or regenerate them."
+        }
+      ],
+      "new_from_verify": [
+        "DOCS ASSERT THE FALSE GROUND TRUTH (worse than the reviewer stated): docs/batfish_oracle_runbook.md:309-312 explicitly claims prefixes_lost will be 'non-empty for remove_network tasks' \u2014 live repro proves it is EMPTY (static routes mask the main-RIB effect). docs/project_guide.md:146-148 states remove_network's 'Expected blast: that loopback prefix disappears from the BGP RIB on all peers' \u2014 i.e. the project KNEW the correct answer is a BGP-RIB (D9) withdrawal, yet shipped a generator default graded by an oracle (prefixes_lost = MAIN RIB) that structurally cannot see it. The docs encode the right answer while the code commits the wrong one.",
+        "METRIC-INVERSION / GAMEABILITY ON TOP OF FALSE-QUIET: the model-facing description for task 0013 is 'On r1, remove `network 10.0.0.1/32` so r1 stops originating its loopback in BGP.' A model that reasons 'origination stops in BGP but static routes back it up, so reachability survives -> empty blast radius' scores a PERFECT pass against the wrong empty GT, while a model that CORRECTLY flags the 4-element BGP-RIB withdrawal would be penalized as a false positive. The wrong GT rewards wrong-but-plausible reasoning and punishes correct reasoning \u2014 the exact pathology NetBrace exists to catch, baked into its own generator default.",
+        "NO REGRESSION GUARD: tests/unit/test_generator.py:46-50 (test_remove_network_removes_origination) only asserts the patch deletes one `network` line; it never asserts anything about the blast radius / GT. Nothing in the unit suite would catch the empty-GT trap, so adding remove_network to a shipped suite would pass CI silently.",
+        "Under the v0 oracle, an empty-GT remove_network task is indistinguishable from a genuine no-op/calibration twin \u2014 the precise no-op-vs-trap ambiguity the newer QUIET/REROUTE families (is_trap twins) were designed to eliminate. This legacy generator has no such twin and no is_trap field, so it cannot be disambiguated even in principle without the D9 oracle.",
+        "GAMEABILITY (square4 shut_neighbor family, all 12 committed tasks): prefixes_lost=[] in 12/12 AND reachability_lost=[] in 12/12 -- only sessions_lost is ever non-empty. A constant heuristic ('no prefixes lost, no reachability lost') scores a perfect prefix-dim and reachability-dim recall/precision on the entire committed v0 square4 family. The family effectively tests a single signal ('name the shut session'). This is the known v0 limitation motivating the D9/reroute extension, but it means any per-dimension score on the v0 square4 family for D2/D3 is uninformative and must not be reported as evidence of model capability.",
+        "LATENT TRAP (generator.py:42): the default GenerationSpec.intents includes 'remove_network', so the default generate->live-oracle->commit path WILL emit remove_network tasks stamped with prefixes_lost=[] GT. Combined with the wrong runbook expectation, the next author who regenerates with defaults and trusts the runbook will believe the oracle is broken (expected non-empty, got empty). The runbook fix must land before any remove_network task is generated/committed, or the watched-prefix loss for remove_network must be routed to the D9 bgp_watch_prefixes term and the operator_question must stop implying 'prefixes lost' is measurable via the main-RIB diff for this intent.",
+        "DOC INTERNAL CONTRADICTION is self-evident in one file: runbook line 84-85 ('only where the prefix truly disappears from the RIB entirely (not just from one protocol)') logically entails prefixes_lost=[] for remove_network (BGP-only withdrawal), directly refuting line 311. Reviewer can quote both lines side by side.",
+        "DISTINCTNESS/RELABEL (major): The 12 'square4' tasks are NOT 12 distinct scenarios \u2014 they are the SAME single mechanism (shut one iBGP neighbor in a 4-node full mesh) enumerated over the 12 directed (node, peer) pairs. Every one has identical GT shape: sessions_lost=2, prefixes_lost=0, reachability_lost=0, is_trap=False. This is exactly the 'n=12 instances of one trick' weakness MEMORY.md says the quiet-half diversification was meant to defeat \u2014 but it survives untouched in the committed v0 core. A reviewer will read N=12 and see N=1-mechanism x 12 permutations.",
+        "GAMEABILITY (major): Because all 12 committed tasks share one GT template (sessions_lost = the two endpoints of the shut neighbor; prefixes_lost=[]; reachability_lost=[]), a trivial heuristic \u2014 'output the two endpoints of the removed neighbor line, predict zero prefix/reachability loss' \u2014 scores a PERFECT 1.0 precision/recall on the entire square4 suite without any control-plane reasoning. The suite tests config-line parsing, not blast-radius understanding. There is no negative/trap case in this 12 (all is_trap=False), so a model that ALWAYS predicts 'session down, nothing else lost' is never penalized here.",
+        "PROMPT LEAK (minor): change.description literally says '...to take the session down.' (file 0001) and presentation.operator_question asks 'Which BGP sessions and prefixes will be lost' \u2014 the prompt names the exact dimension (sessions) the GT scores and tells the model the change's effect (session down). Combined with the gameability above, the model is handed the answer pattern. For a session-loss task this is mild, but it means square4 cannot be cited as evidence a model 'discovered' the session loss.",
+        "PROVENANCE GAP IS WIDER THAN CLAIMED: the determinism report (runs/determinism_20260610_213818/report.json) ALSO lacks pybatfish client version, Java/coordinator version, and snapshot/init-issue counts \u2014 any of which can change recognized-line behavior. The reviewer flagged only the image digest; the header is missing the whole engine-stack fingerprint.",
+        "meta.hand_validated=false on all 12 committed tasks \u2014 combined with engine_version=None, NONE of the shipped v0 ground truth is both engine-pinned AND human-checked. The \u03ba\u22650.7 labelling doctrine has not touched these."
+      ],
+      "refuted_count": 0,
+      "minor": [
+        {
+          "severity": "minor",
+          "lens": "oracle",
+          "claim": "The shipped square4 family has NO corpus/noc grounding file (flagged in the brief as a finding).",
+          "fix": "Acceptable to ship WITHOUT a dedicated outage file: square4 is the trivial D1 calibration base (an iBGP session teardown), not a subtle real-world mechanism that needs an outage citation. A one-line note in the runbook stating it is the calibration/control base is enough; a full noc/ file is not required for this family."
+        },
+        {
+          "severity": "nit",
+          "lens": "oracle",
+          "claim": "shut_neighbor reachability_lost is empty on every task and this is CORRECT, but the subtlety should be documented as intended so it is not later read as an oracle miss.",
+          "fix": "No code change. Keep the runbook lines 76-86 note; ensure the paper text never reports D3=empty here as a recall gap \u2014 it is the designed answer."
+        }
+      ]
+    }
+  ],
+  "distinctness": {
+    "axis_verdict": "PARTIALLY_DISTINCT",
+    "decision_step_map": [
+      {
+        "family": "igp_metric",
+        "decision_step": "OSPF intra-area `ip ospf cost` edit -> recursive BGP NEXT_HOP re-resolution -> RFC 4271 9.1.2.2 IGP-metric (interior-cost) tiebreak. BGP attributes byte-identical; decisive surface is non-BGP (IGP). Oracle PASS, clean D4+D10."
+      },
+      {
+        "family": "igp_summary",
+        "decision_step": "SAME IGP-metric tiebreak as igp_metric. AS-BUILT it edits `ip ospf cost` on an ABR backbone interface (NO `area range cost` summarization is configured, despite the name/corpus/catalog claiming /32-suppression behind a summary). Distinguishing surface is only the area boundary (inter-area Type-3 vs intra-area), NOT a different decision step. batfish_verified_facts.md:154-163 confirms the bare `area range cost` IS modeled and WOULD suppress the /32, so the missing summarization is the linchpin distinctness feature and it is absent."
+      },
+      {
+        "family": "redistribute_ad",
+        "decision_step": "OSPF `redistribute bgp` -> main-RIB administrative-distance arbitration (FRR zebra: OSPF-E2 AD 110 evicts iBGP AD 200). Decides in the RIB protocol-preference layer, ABOVE/OUTSIDE the BGP best-path comparator and the IGP-metric tiebreak. Genuinely distinct skill (cross-protocol AD)."
+      },
+      {
+        "family": "nexthop_elim",
+        "decision_step": "Remove outbound `set ip next-hop` -> NEXT_HOP becomes IGP-unresolvable -> path INVALIDATED and dropped from candidate set (RFC 4271 9.1.2.1 unresolvable-NEXT_HOP) -> survivor wins by ELIMINATION (strict baseline MED holds determinism). Decisive step is candidate-set VALIDITY, not a comparator tiebreak. Distinct."
+      },
+      {
+        "family": "community_lp",
+        "decision_step": "`set community` on advertiser re-arms a latent UNCHANGED receiver community->LOCAL_PREF map -> RFC 4271 9.1.2.2 LOCAL_PREF step. Decisive attribute = LOCAL_PREF."
+      },
+      {
+        "family": "community_trigger",
+        "decision_step": "SAME LOCAL_PREF step as community_lp, via the SAME community->LP idiom. Third party (dst) sets `community additive` to trip src's latent LP term. Differs ONLY in administrative LOCUS (adversarial / off-diff device), not in decision step or attribute."
+      },
+      {
+        "family": "far_as_prepend",
+        "decision_step": "Foreign-AS (dst) outbound `set as-path prepend` -> RFC 4271 9.1.2.2 step-4 AS_PATH-length comparison. Decisive attribute = AS_PATH length. Differs from generator_lp/prepend_way only in LOCUS (foreign AS vs src-inbound)."
+      },
+      {
+        "family": "med_far_as",
+        "decision_step": "Customer (dst) `set metric` per-uplink -> RFC 4271 9.1.2.2(a) MED step (single-neighbor-AS, comparable; Batfish compares MED unconditionally per batfish_verified_facts.md:140). Decisive attribute = MED."
+      },
+      {
+        "family": "remove_dead_prepend",
+        "decision_step": "Delete AS-path prepend -> AS_PATH lengths EQUALIZE at step 4 -> decision FALLS THROUGH to a latent strict MED (200 vs 50). STRADDLES two families: the surface acted on is AS_PATH (far_as_prepend territory) but the FINAL discriminator is MED (med_far_as territory). The novelty is the subtraction-polarity surface, not a new decision step."
+      },
+      {
+        "family": "rr_bestpath",
+        "decision_step": "`ip ospf cost` at the REFLECTOR -> rr's own best resolves at the IGP-metric tiebreak (SAME step as igp_metric) -> RFC 4456 \u00a711 single-best projection re-homes the single-path client. The RR projection is a PURITY device (keeps src single-path so D5 stays empty); the DECIDING step is the igp_metric tiebreak, not the reflection."
+      },
+      {
+        "family": "agg_collapse",
+        "decision_step": "`aggregate-address summary-only` SUPPRESSES the steering /25 -> source LPM (RFC 1812 longest-match) falls back to the covering /24 whose best path is off-waypoint. Decided in the FORWARDING/LPM layer, NOT a BGP best-path comparator at all. Genuinely distinct skill."
+      },
+      {
+        "family": "clause_fallthrough",
+        "decision_step": "Delete/re-sequence a route-map clause (NO value edit) -> way-path first-matches the catch-all -> LOCAL_PREF drops, ties, then falls through to AS_PATH length. Decisive attributes = LOCAL_PREF then AS_PATH; distinctive SKILL is route-map first-match/clause-ordering semantics (a real config-reading axis) layered on the LOCAL_PREF/AS_PATH comparator."
+      },
+      {
+        "family": "origin_code",
+        "decision_step": "`network`<->`redistribute` swap -> ORIGIN code ties (igp/incomplete) -> falls through to a latent strict MED (way=200, alt=50). The ENABLING edit is ORIGIN, but the OUTCOME discriminator is the SAME unconditional-MED gap as med_far_as (origin_code docstring lines 30-34 admit this). Distinct on the read-the-diff axis (ORIGIN semantics), NOT on the routing-mechanism axis."
+      }
+    ],
+    "clusters": [
+      "IGP recursive-resolution / hot-potato (decides at RFC 4271 IGP-metric tiebreak via an `ip ospf cost` edit): igp_metric, igp_summary (as-built), rr_bestpath",
+      "RIB administrative-distance arbitration (cross-protocol RIB, distinct layer): redistribute_ad",
+      "NEXT_HOP candidate-set validity / win-by-elimination: nexthop_elim",
+      "LOCAL_PREF comparator (community->LP or clause first-match resolving to LOCAL_PREF): community_lp, community_trigger, clause_fallthrough",
+      "AS_PATH-length comparator: far_as_prepend, remove_dead_prepend (surface)",
+      "MED comparator (final discriminator): med_far_as, origin_code (final step), remove_dead_prepend (fall-through)",
+      "Forwarding LPM / longest-prefix-match (not a best-path comparator): agg_collapse"
+    ],
+    "redundant_pairs": [
+      "igp_summary == igp_metric: both edit `ip ospf cost` and decide at the IGP-metric tiebreak; the /32-suppression-behind-area-range that the name/corpus/catalog claim as the distinguishing linchpin is NOT built (confirmed vs batfish_verified_facts.md:154-163, which says the bare `area range cost` IS modeled). As shipped, the only difference is topology placement (intra-area link vs ABR backbone link), not a different config-reading task.",
+      "rr_bestpath == igp_metric (on the DECIDING step): the flip is decided by the IGP-metric tiebreak at rr via the same `ip ospf cost` edit; RFC 4456 single-best reflection is a purity device, not the decision. A reviewer can call the bypass a vanilla hot-potato that would occur with rr as a plain iBGP transit.",
+      "origin_code == med_far_as (on the OUTCOME discriminator): origin_code's POST winner is decided by the SAME unconditional same-neighbor-AS MED gap (50<200) that med_far_as edits directly; the network<->redistribute swap is only the ORIGIN-tie preamble. Both fire identical {intent,waypoint} dims on identical trap structure. 'A MED trap with an extra ORIGIN step.'",
+      "community_trigger == community_lp: both decide at the LOCAL_PREF step via the identical community->LP idiom; differ only in administrative LOCUS (adversarial third-party off-diff vs internal). Same decision step, same attribute, same skill.",
+      "remove_dead_prepend straddles far_as_prepend (AS_PATH surface) and med_far_as (latent-MED discriminator): not an independent decision step; its claim rests on subtraction-polarity, not a new mechanism."
+    ],
+    "recommendation": "VERDICT: PARTIALLY_DISTINCT \u2014 the quiet half is NOT one mechanism relabeled 13x, but it is NOT 13 distinct mechanisms either. It collapses to ~6 genuinely distinct decision surfaces (IGP-metric tiebreak; RIB admin-distance; NEXT_HOP candidate validity; LOCAL_PREF; AS_PATH-length; MED; LPM). To make it DEFENSIBLY A CLASS, reframe and prune as follows.\n\nREFRAME (not 13 mechanisms): Stop claiming '~13 distinct mechanisms.' Claim what the decision_step_map actually supports: the SAME D4+D10-only invariant is reproduced across (a) ~6 distinct best-path/RIB/forwarding DECISION SURFACES x (b) two orthogonal coverage axes (subtraction-polarity, adversarial/foreign locus). 'Decision-step diversity' is the honest and still-strong framing; 'mechanism count' is the reviewer kill-shot.\n\nCUT or DOWNGRADE-TO-AXIS (do NOT count as independent mechanisms):\n- igp_summary: BLOCKING for the distinctness claim as currently named/grounded. Either (a) rebuild with the real `area N range <supernet>/M cost C` (batfish_verified_facts.md:154-163 confirms it parses AND suppresses the /32 on the pinned digest \u2014 so build the linchpin), which makes it a genuine inter-area/Type-3 + LPM-suppression mechanism distinct from igp_metric; OR (b) re-title corpus + catalog + docstring to 'inter-area Type-3 metric displacement,' state the /32 is NOT suppressed, and count it as the SAME IGP-metric mechanism at a different topology locus (an axis, not a 14th mechanism). Do NOT ship the current name/grounding mismatch.\n- rr_bestpath: keep ONLY as the 'single-path projection' purity demonstration; concede the deciding step is the igp_metric tiebreak. Frame it as 'RR projection makes a hot-potato flip blind to a client,' not as an independent mechanism.\n- origin_code: either isolate ORIGIN as load-bearing (ablate the latent MED so the ORIGIN step alone decides) or label it a med_far_as variant reached via a deeper attribute. The test file's own 'provisional cause' flag (test_generator_family23.py:11-15) must be cleared by the architect before any prose calls ORIGIN 'the decisive change.' Also fix the GAMEABILITY tell (bypass always edits the customer prefix, no_op never does \u2014 a purely syntactic heuristic separates trap/calibration with 100% accuracy across 12 instances) and author the missing knowledge/corpus/noc/origin_code_quiet_reroute.md (only reroute family with no grounding file).\n- community_trigger: keep, but count as the LOCUS axis of community_lp (adversarial), not a separate decision step.\n- remove_dead_prepend: keep as the SUBTRACTION-polarity axis spanning AS_PATH->MED, not as an independent mechanism.\n\nKEEP as genuinely distinct (different decision SURFACE/skill): redistribute_ad (RIB admin-distance), nexthop_elim (candidate-set validity), agg_collapse (forwarding LPM), plus one representative each of the LOCAL_PREF / AS_PATH / MED / IGP-metric comparator surfaces.\n\nNON-DISTINCTNESS BLOCKERS to fix before paper: (1) igp_summary name/grounding-vs-config mismatch AND the self-contradicting committed artifacts (generator says `area range cost` is PARTIALLY_UNRECOGNIZED; batfish_verified_facts.md:154-163 says it IS modeled, same digest, same date) \u2014 one is wrong; re-run the live parse and record one authoritative status. (2) Docstring MED-mechanism errors in med_far_as, remove_dead_prepend, origin_code claim Batfish honors a same-neighbor-AS MED gate; the project's own KB (batfish_verified_facts.md:140, BgpRib.java:209) says Batfish compares MED UNCONDITIONALLY \u2014 fix the rationale (outcome is unaffected). (3) origin_code RFC citation: ORIGIN is cited as '\u00a79.1.1 step 5' (Phase-1 degree-of-preference) but the ORIGIN tie-break lives in \u00a79.1.2.2 \u2014 fix before this prose migrates to the paper.\n\nNON-BLOCKING for results (all 13 are individually oracle-PASS, clean D4+D10, deterministic 10x, correct GT, NOT false-quiet \u2014 verified agg_collapse.json and igp_summary.json artifacts). None of these families is yet wired into scenarios.py / build_generated_suite_multi / the TR, so every distinctness defect is pre-publication and fixable. METRIC NOTE: report recall-where-truth on the trap half, not raw accuracy across trap+calibration twins, or the 50/50 no_op twins inflate apparent skill (per grader_artifact_d7 lesson) \u2014 several families also carry fixed-numeric / positional contamination tells that defeat the calibration twin's purpose."
+  },
+  "coverage": {
+    "necessity_verdict": "SOME_REDUNDANT",
+    "missing_classes": [
+      "RPKI/ROV-invalid silent reroute that bypasses a security/scrubbing/inspection waypoint \u2014 the single most defensible 2026 gap. Independently measured: 18.5% of RPKI-invalid prefixes rerouted and 'frequently bypassed upstream networks meant to provide security services such as DDoS mitigation or traffic inspection' (Wan/Li/Chung, NDSS 2026; 42,654 unique invalid prefixes, >6k/day, Jan2023-Jul2024). TORCH (arXiv:2603.29207, 2026) corroborates reachability-persists-while-filtering-bypassed. This IS the D4+D10 signature stated by an outside measurement team \u2014 and the catalog has zero ROV-driven instances. Gradeable via a modeled deny/depref of the invalid-origin path (literal 'match rpki invalid' is a Batfish FALSE-QUIET landmine \u2014 confirmed unmodeled 2026-06-15). Grounding file written: knowledge/corpus/noc/rpki_rov_invalid_quiet_reroute.md.",
+      "Cisco WEIGHT-attribute reroute (best-path step 1, ABOVE LOCAL_PREF). The catalog decides at LP(step2)/AS_PATH(step4)/ORIGIN(step5)/MED/IGP-metric/NH-unresolvable but NEVER at the highest, most-operator-surprising step. WEIGHT is per-router, non-transitive, invisible to a neighbor diff, and a classic 'why did THIS box pick the other path' incident. One more comparator-wedge locus that is genuinely a different reasoning step, not a relabel. No generator and no corpus file touch WEIGHT as a mechanism (grep hits are prose 'weight'/'weighted' only).",
+      "PMTUD blackhole / MSS-clamp removal \u2014 a forwarding-survives-but-large-packets-die class. ICMP-too-big filtered or a 'cleanup' that removes 'ip tcp adjust-mss': pings and small flows pass (D3 looks clean), TLS/bulk transfer silently blackholes. No family covers the partial-blackhole-by-packet-size mechanism. (Gradeability caveat: needs a per-flow/MTU oracle term \u2014 likely a vendor-track or deferred item, but the CLASS gap should be named, not silently absent.)",
+      "BGP maximum-prefix tear-down threshold cross \u2014 a scale/D8 + D1 cascade where adding a redistribution or accepting a fuller table trips 'neighbor X maximum-prefix N' and DROPS the session (not just overflows a table). scale_deagg covers FIB/RIB-count overflow but NOT the max-prefix-induced session reset, which is a different, very common second-order outage (a config that adds prefixes elsewhere quietly kills a session at a threshold the operator forgot)."
+    ],
+    "padding_risk": [
+      "igp_summary is a near-clone of igp_metric (REAL REDUNDANCY, already confirmed by the design lens at MAJOR). The generator builds NO OSPF summarization \u2014 its corpus title, the frozen-set catalog (Family-1 'igp-summary-default-nexthop'), AND its own docstring all claim 'area N range ... cost C' with /32-suppression as the distinguishing linchpin, but render code (_abr_config) ships a bare 'ip ospf cost' on an ABR backbone interface. Identical fixed cost constants {10,100,200,5,300}, identical 4-combo structure. To a model reading the diff BOTH present as 'an ip ospf cost integer changed X->Y'; the only real difference is which area the edited interface sits in. A reviewer diffing corpus-vs-code calls this 'two instances of one OSPF-cost trick' and the ~13-distinct-mechanism count drops to ~12. FIX: build the real 'area range cost' (the project's OWN batfish_verified_facts.md:154-163 says the BARE form IS modeled and suppresses the /32 on this digest \u2014 directly contradicting the generator's excuse that it is PARTIALLY_UNRECOGNIZED) so the /32 is actually suppressed and the mechanism is genuinely distinct; OR drop igp_summary and stop claiming summarization.",
+      "origin_code's deciding attribute collapses to the SAME same-neighbor-AS MED gap (way 200 vs alt 50) as med_far_as (distinctness thinness, already confirmed). The ORIGIN swap only TIES origin so the decision falls through to MED; the attribute the oracle actually scores the flip on is MED, identical to med_far_as, same seed scheme, identical fired dims. A hostile reviewer says 'origin_code is a med_far_as reskin with an ORIGIN preamble.' Defensible ONLY if the catalog frames it as 'same outcome reached two best-path steps deeper' AND the missing grounding file (origin_code has NO noc/*.md \u2014 the only reroute family lacking one) justifies inconsistent-origination as a distinct real failure mode. Currently it does neither, so as committed it reads as padding.",
+      "GAMEABILITY-as-padding across BOTH Family-1 generators: the trap/no_op twin is meant to PROVE second-order routing reasoning, but hard-coded never-randomized cost constants {10,100,200,5,300} let a model classify bypass-vs-no_op from the edited node's pre-cost + edit direction with ZERO routing reasoning (verified by the fleet at seed 500). When the calibration twin is gameable by a syntactic shortcut, the family is effectively padding the question count without testing the thesis. origin_code has the worst version: a 'does the patch add/remove a line mentioning the intent's prefix?' heuristic separates trap from twin with 100% accuracy across 12 instances. FIX: per-seed-randomize the cost constants (keep only the strict-gap invariant); make origin_code's no_op also touch the customer prefix in a best-path-neutral way. Until fixed, report recall-where-truth on the trap half, never raw twin accuracy (per the project's own grader_artifact_d7 lesson).",
+      "square4 (loud-half v0 core) is N=1 mechanism x 12 directed (node,peer) permutations of 'shut one iBGP neighbor' \u2014 every task has identical GT shape (sessions_lost=2, prefixes/reachability=0, is_trap=False). A constant heuristic scores perfect on the prefix and reachability dims. This is textbook 'N=12 instances of one trick' padding sitting in the frozen core. It is legitimately the D1 calibration BASE, but it must be reported/counted as ONE mechanism with 12 permutations, not as 12 scenarios, or the headline N is inflated. (Plus the latent remove_network FALSE-QUIET trap in generator.py:42 default, already flagged blocking by the oracle lens.)"
+    ],
+    "notes": "VERDICT: SOME_REDUNDANT. The catalog is NOT padded with relabels wholesale \u2014 the 3-cause-family thesis (recursive underlay displacement / comparator wedge / route-visibility projection) is real and the comparator-wedge families decide at genuinely different best-path steps (LP step2, AS_PATH step4 via both prepend-foreign-locus AND clause-deletion, MED, NH-unresolvable-elimination), which I confirmed via direct step-attribution mapping. The locus axis (own-config vs foreign-AS vs adversarial-3rd-party vs RR-projection) is a legitimate, reviewer-defensible diversity argument, not a parameter tweak. The loud half (leak/clos_summary/mgmt_lockout/blackhole/scale) covers distinct mechanisms.\n\nBUT two of the ~13 quiet families are real redundancy a hostile reviewer WILL hit: (1) igp_summary is igp_metric relabeled \u2014 it claims summarization it does not build, leaving only an area-boundary placement difference; the project's own KB refutes the 'can't build it' excuse, so this is fixable, not fatal. (2) origin_code's scored flip collapses to med_far_as's exact MED gap, and it is also the only reroute family with no grounding file. Fix both (build real area-range summarization; isolate origin from MED + write the grounding doc) or the distinct-mechanism count is honestly ~11, not 13.\n\nThe bigger necessity finding is the MISSING classes. The catalog is deep on intra-domain best-path mechanics but has a 2026-shaped hole: RPKI/ROV-invalid silent reroute is now an independently-MEASURED, NDSS-2026-published instance of exactly this benchmark's D4+D10 signature ('ROV filtering can silently reroute traffic away from its intended path... bypassing upstream security services'), and the catalog has zero ROV instances. That is the single highest-leverage addition and the one a 2026 reviewer is most likely to ask 'why isn't this here?'. I wrote the grounding file (knowledge/corpus/noc/rpki_rov_invalid_quiet_reroute.md) with the gradeability path (model the deny/depref \u2014 literal 'match rpki invalid' is a Batfish false-quiet landmine, confirmed unmodeled). Also missing: WEIGHT (the one best-path step ABOVE LP that nothing tests), PMTUD/MSS partial-blackhole (forwarding-survives-but-big-packets-die \u2014 class gap even if oracle-deferred), and max-prefix threshold session teardown (distinct from scale_deagg's table overflow).\n\nACTION FOR ORCHESTRATOR: I added knowledge/corpus/noc/rpki_rov_invalid_quiet_reroute.md \u2014 the FAISS index MUST be rebuilt: run `python -m knowledge.tools.build_index`. Files I touched/cited: /home/harshitsingh/projects/NetHelm/knowledge/corpus/noc/rpki_rov_invalid_quiet_reroute.md (new). Redundancy evidence in: netbrace/tasks/safety/generator_igp_summary.py (no area-range render), generator_igp_metric.py:124-130 vs generator_igp_summary.py:155-162 (identical cost constants), generator_origin_code.py:30-32 (own admission it falls through to MED), and the missing knowledge/corpus/noc/origin_code_*.md grounding file."
+  }
+}

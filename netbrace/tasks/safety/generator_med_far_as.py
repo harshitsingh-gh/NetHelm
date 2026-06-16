@@ -1,0 +1,677 @@
+"""Family-2 generator — MED-DRIVEN FAR-AS EGRESS FLIP (the `med_far_as` mechanism):
+a dual-homed CUSTOMER (dst) re-tunes the per-link MED it advertises, flipping the
+provider core's best path to that customer off the inspection waypoint `way` onto the
+bypass `alt` — with NO change at all on the provider side and NO BGP session reset.
+
+This is the MED member of the quiet-half catalog (Family 2, BUILD_V1.1). It is the
+"the change is on the OTHER side of the eBGP boundary" sibling of `generator_lp`
+(an inbound LOCAL_PREF/AS-path edit on the provider's OWN routers) and of
+`generator_igp_metric` (an interior OSPF cost edit). Here the decisive edit lives on
+the CUSTOMER's router (dst), one AS away, and acts through the MULTI_EXIT_DISCRIMINATOR
+that dst attaches to each of its two uplinks — the textbook "customer steers the
+provider's inbound traffic with MED" technique (RFC 4271 §5.1.4 sets the attribute;
+the decision rides the MULTI_EXIT_DISC tie-break in §9.1.2.2 "Breaking Ties (Phase 2)").
+
+Mechanism (RFC 4271 §9.1.2.2 "Breaking Ties (Phase 2)", the MULTI_EXIT_DISC item; FRR
+bgp_path_info_cmp MED step):
+the customer dst is dual-homed via eBGP to BOTH provider egresses `way` and `alt`,
+which are in the SAME provider AS (a single-provider dual-homing — see the HARD
+CONSTRAINT below). dst originates the customer /24 and, on its OUTBOUND advertisement
+to each egress, sets a per-neighbor MED (`set metric`). Within the provider AS the two
+received paths to the customer /24 are otherwise IDENTICAL:
+
+  * same LOCAL_PREF (provider applies no inbound LP policy -> default on both),
+  * EQUAL AS_PATH length (both ``[AS_dst]`` — a single customer AS hop on each),
+  * same ORIGIN,
+so the BGP best-path decision at the inspection-source `src` FALLS THROUGH to the MED
+comparison. The two MEDs are COMPARABLE under BOTH comparators, so the mechanism is
+correct on a real router AND deterministic in Batfish:
+
+  (a) REAL ROUTER (RFC 4271 §9.1.2.2, the MULTI_EXIT_DISC item): a real BGP speaker
+      compares MED only between routes whose first/leftmost neighbour AS is the same,
+      unless `always-compare-med` is configured. This topology SATISFIES that gate
+      anyway — single upstream/customer AS, dual-homed, so both received paths carry
+      neighbour-AS = AS_dst — so the same-first-AS condition holds and the MED is
+      eligible WITHOUT `always-compare-med`.
+  (b) BATFISH (pinned digest): Batfish's best-path comparator compares MED
+      UNCONDITIONALLY — `BgpRib.java:209` is a bare `Long.compare(getMetric, getMetric)`
+      with NO same-neighbour-AS gate; its default already behaves like
+      `always-compare-med` (see knowledge/corpus/batfish/batfish_verified_facts.md,
+      "MED comparability knobs are UNMODELED in FRR"). The FRR dialect parses-and-drops
+      both `always-compare-med` and `deterministic-med` to no-ops.
+
+The mechanism decides purely on the MED *value* flip (way-MED vs alt-MED), NOT on the
+gate, so it does NOT depend on the same-first-AS condition being honoured. That makes
+it IMMUNE to the always-compare-med false-quiet landmine that kills gate-dependent
+scenarios in FRR: it never relies on `always-compare-med` being OFF (a no-op flag that
+would suppress the pre-state for any gate-based scenario), so (a) and (b) agree. The
+MED dst attached on each eBGP uplink is PRESERVED across the eBGP->iBGP boundary and
+propagated on the provider's iBGP overlay (MED is non-transitive across an AS but IS
+carried within the receiving AS — verified FRR docs 2026-06-15), so `src` (a provider
+router that learns both paths over iBGP) compares dst's two MEDs directly.
+
+  * PRE: dst advertises a STRICTLY LOWER MED toward `way` than toward `alt`, so the
+    way-path wins the MED step and src->customer transits the inspection node `way`.
+  * DIFF: dst edits ONE `set metric` value on ONE of its outbound MED route-maps
+    (RAISE the MED toward way, or LOWER the MED toward alt) — framed as a routine
+    customer-side inbound-TE retune. ZERO provider-side surface.
+  * POST: the alt-path now has the strictly lower MED, best-path re-resolves to `alt`,
+    and src->customer silently bypasses `way`.
+
+THE QUIET SIGNATURE (D4 waypoint + D10 intent ONLY): a MED change never resets the BGP
+FSM (RFC 4271 §8: Established exits only on NOTIFICATION/hold-timer/TCP teardown), so
+D1=∅. The /24 stays BEST and installed in every provider RIB (only its chosen egress
+moves), so D2=∅; `alt` delivers exactly as `way` did, so D3=∅, D7=∅. A STRICT (non-equal)
+MED gap in BOTH snapshots means exactly one best path each time at the MED step — which
+sits ABOVE the IGP-metric and router-id items (RFC 4271 §9.1.2.2 "Breaking Ties (Phase
+2)" order) — so the nondeterministic router-id/age tiebreak is NEVER reached, maximum-paths default 1, no
+equal-cost ECMP tie, D5=∅, and the oracle is byte-identical. The provider's OSPF costs
+to the two egress loopbacks are deliberately EQUAL (the MED decides first), so the IGP
+step cannot covertly become the discriminator.
+
+HARD CONSTRAINT — DUAL-HOMED, SINGLE PROVIDER (one core AS for way+alt). This keeps the
+scenario REAL-ROUTER-IDIOMATIC: on a real speaker, MED decides only between same-first-AS
+routes (RFC 4271 §9.1.2.2), and a single customer AS dual-homed to one provider satisfies
+that gate without `always-compare-med`. (Batfish would compare the MEDs even across
+different neighbour ASes — its comparator has no such gate — but we do NOT lean on that;
+the single-provider design makes the mechanism correct on both real routers and Batfish.)
+If way and alt sat in DIFFERENT transit ASes, a real router would no longer compare the
+MEDs absent `always-compare-med`, so the topology is, by construction, a single-provider
+dual-homing: src/way/alt are ONE provider AS, dst is ONE customer AS dual-homed to it.
+
+REQUIRED FIX (verified on the pinned Batfish digest, 2026-06-15):
+  * Do NOT emit ``bgp deterministic-med`` ANYWHERE — it is unparseable in the Batfish
+    snapshot (it would fail fileParseStatus). The strict MED gap in both snapshots gives
+    a well-defined, order-independent best path without it.
+  * Do NOT emit ``bgp always-compare-med`` either — the FRR dialect parses-and-drops it
+    to a no-op (batfish_verified_facts.md), and the mechanism does not need it: it
+    decides on the MED VALUE flip, which both the real-router same-first-AS comparator
+    (satisfied here) and Batfish's unconditional comparator evaluate identically.
+  * The egress next-hop rewrite toward src uses the HONORED outbound route-map
+    ``set ip next-hop <own-lo>`` form, NOT bare ``neighbor X next-hop-self`` (which the
+    pinned digest treats as a no-op for eBGP-learned routes). Identical to
+    generator_igp_metric.
+
+Topology (4 nodes; OSPF underlay between src and the two egresses, iBGP overlay in one
+provider AS, eBGP to the single customer AS)::
+
+           MED (the KNOB) set by dst on its OUTBOUND advertisement to each egress
+        +----------------------------------------------------+
+        |                                                    |
+      src --(OSPF /30)-- way --(eBGP /30)-- dst   (the WAY / inspection path)
+   (AS_core) |                               |
+             |                               |   customer /24
+             +-(OSPF /30)-- alt --(eBGP /30)-+   (originated by dst AS_dst,
+                                                  dual-homed eBGP to way & alt)
+
+  * src, way, alt are ONE provider AS (iBGP full mesh over loopbacks, OSPF speakers).
+    dst is the single customer AS (eBGP), originating the customer /24 on a connected
+    dummy host.
+  * src<->way and src<->alt are OSPF point-to-point /30 links with EQUAL cost (so the
+    IGP-metric step is a tie; MED decides above it). way<->dst and alt<->dst are eBGP
+    /30 links and are NOT in OSPF.
+  * way and alt each eBGP-learn the customer /24 from dst (WITH dst's per-link MED) and
+    re-advertise it to src over iBGP, rewriting the NEXT_HOP to their OWN loopback via
+    an outbound route-map ``set ip next-hop <lo>``; the MED is carried unchanged on the
+    iBGP advertisement. src resolves that loopback recursively through OSPF.
+  * The provider applies NO inbound BGP policy on src; the two received paths are
+    attribute-tied EXCEPT for dst's MED. The change edits ONE ``set metric`` value on
+    dst — zero provider-namespace surface.
+
+Structural axes (each a genuinely distinct config-reading task or a calibration
+control — NOT a clone):
+
+  * knob ∈ {raise_way, lower_alt} — two DIFFERENT MED edits on dst that both flip the
+    egress off the waypoint, each on a different outbound route-map / opposite direction:
+      - raise_way : baseline MED(dst->way)=50 < MED(dst->alt)=200 (way wins); the change
+        RAISES dst's MED toward way to 300, so alt now wins (200 < 300).
+      - lower_alt : same baseline; the change LOWERS dst's MED toward alt to 10, so alt
+        now wins (10 < 50). Same outcome, opposite edit, different route-map to read.
+
+  * effect ∈ {bypass, no_op} — the calibration axis:
+      - bypass : the edit actually flips the MED winner. D4+D10 fire; D1/D2/D3/D5/D7=∅.
+        THE trap.
+      - no_op  : the SAME KIND of ``set metric`` edit applied where it does NOT change
+        the winner (raise the already-losing alt-side MED higher; lower the
+        already-winning way-side MED lower). Ground truth is COMPLETELY EMPTY across ALL
+        dimensions — the calibration trap (the model must predict an empty blast radius).
+        The prose is indistinguishable in style from a bypass edit.
+
+That is 2 knobs × 2 effects = 4 structural combos × seeds.
+
+Per-seed randomization (contamination control, exactly like generator_igp_metric): the
+core ASN, the customer-AS ASN, the loopback block, the link /30 supernet, the customer
+/24, and the node base name are all drawn deterministically from the seed.
+
+Determinism contract (oracle_determinism_spec class STATIC-DET): every best-path
+decision is STRICT at the MED step in both snapshots (a real, non-equal MED gap) —
+exactly one best path at src in each snapshot, no equal-cost ECMP tie, maximum-paths
+default 1. The MED step sits above IGP-metric and router-id, so the nondeterministic
+tiebreaks are never reached. D4 is scored by ExtendedOracle._waypoint_diff as the
+all-traces-transit invariant; D10 by the matching kind="waypoint" IntentInvariant.
+
+Public API mirrors generator_igp_metric:
+    generate_med_far_as_suite(n, base_seed=...)        -> list[Scenario]
+    generate_med_far_as_all_combos(seed=...)           -> list[Scenario]
+    generate_med_far_as_instance(seed, spec=None)      -> Scenario
+    enumerate_specs() / enumerable_count()
+"""
+
+from __future__ import annotations
+
+import difflib
+import random
+from dataclasses import dataclass
+from typing import Optional
+
+from netbrace.tasks.safety.scenarios import IntentInvariant, Scenario
+from netbrace.tasks.safety import _role_position as _rp
+from netbrace.topology.patches import apply_unified_diff
+
+# --------------------------------------------------------------------------- #
+# Axis value sets (the enumerable space).
+# --------------------------------------------------------------------------- #
+KNOB_VALUES = ("raise_way", "lower_alt")
+EFFECT_VALUES = ("bypass", "no_op")
+
+AXES = {
+    "knob": KNOB_VALUES,
+    "effect": EFFECT_VALUES,
+}
+
+from dataclasses import dataclass as _dc
+
+
+@_dc(frozen=True)
+class _MedValues:
+    """Per-seed strict-gap MEDs dst advertises on each uplink. STRICTLY increasing
+    (way wins PRE so the way-side MED is the cheaper):
+
+        way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+
+    so the edited MED route-map's pre-value ALONE cannot classify bypass vs no_op (the
+    value-memorization fingerprint the hardcoded {50,200,300,10,400,5} block had), and
+    every snapshot keeps a STRICT (non-equal) MED gap (no ECMP/D5)."""
+
+    way_pre: int
+    alt_pre: int
+    way_raised: int
+    alt_lowered: int
+    alt_raised: int
+    way_lowered: int
+
+
+def _draw_meds(rng: random.Random) -> _MedValues:
+    """Draw a strict-gap-preserving set of `set metric` MED constants (identical
+    construction to generator_igp_metric._draw_link_costs; MED is 0..2^32-1)."""
+    margin = rng.randint(5, 40)
+    way_pre = rng.randint(30, 120)
+    alt_pre = way_pre + margin + rng.randint(5, 80)
+    way_raised = alt_pre + margin + rng.randint(5, 80)
+    alt_raised = way_raised + margin + rng.randint(5, 80)
+    alt_lowered = rng.randint(4, way_pre - 2)
+    way_lowered = rng.randint(2, alt_lowered - 1)
+    assert 2 <= way_lowered < alt_lowered < way_pre < alt_pre < way_raised < alt_raised
+    return _MedValues(way_pre=way_pre, alt_pre=alt_pre, way_raised=way_raised,
+                      alt_lowered=alt_lowered, alt_raised=alt_raised, way_lowered=way_lowered)
+
+
+@dataclass(frozen=True)
+class MedFarAsSpec:
+    """A point in the Family-2 med-far-as generator space (axis tuple, pre-random)."""
+
+    knob: str
+    effect: str
+
+    def dims_label(self) -> str:
+        return f"{self.knob}-{self.effect}"
+
+
+def enumerate_specs() -> list[MedFarAsSpec]:
+    """All VALID axis tuples, in a fixed order (the enumerable instance space)."""
+    out: list[MedFarAsSpec] = []
+    for knob in KNOB_VALUES:
+        for effect in EFFECT_VALUES:
+            out.append(MedFarAsSpec(knob, effect))
+    return out
+
+
+def enumerable_count() -> int:
+    return len(enumerate_specs())
+
+
+# --------------------------------------------------------------------------- #
+# Per-seed randomized parameters (the contamination control).
+# --------------------------------------------------------------------------- #
+# Private 4-byte ASN range (RFC 6996). TWO distinct ASNs: the provider core
+# (src/way/alt share one AS -> iBGP) and the customer AS (dst, eBGP). A distinct band
+# from generator_igp_metric/generator_lp so generated instances never collide.
+_ASN_LO, _ASN_HI = 4_200_300_000, 4_200_399_999
+
+_CUSTOMER_POOLS = [
+    "203.0.113.0",   # TEST-NET-3
+    "198.51.100.0",  # TEST-NET-2
+    "192.0.2.0",     # TEST-NET-1
+    "100.64.{c}.0",  # CGNAT shared (carrier customer space)
+]
+
+_NAME_POOLS = ["r", "rtr", "pe", "node", "edge", "bdr"]
+
+_ROLES = ("src", "way", "alt", "dst")
+
+
+@dataclass(frozen=True)
+class _Params:
+    """The randomized-but-fixed-per-seed concrete values for one instance."""
+
+    core_asn: int            # src/way/alt share this (iBGP)
+    dst_asn: int             # the customer AS (eBGP)
+    loop_block: str          # e.g. "10.37.0" -> loopbacks 10.37.0.X/32
+    link_block: tuple[int, int, int]  # first three octets of the /30 link supernet
+    customer_net: str        # e.g. "198.51.100" (the /24 base, no mask)
+    name: dict[str, str]     # role -> randomized node name string
+    meds: _MedValues         # per-seed strict-gap MEDs (value-memorization fix)
+    swap: bool               # per-seed: exchange the way<->alt PHYSICAL slot (leak fix)
+
+
+def _draw_params(seed: int) -> _Params:
+    rng = random.Random(seed)
+
+    core_asn = rng.randint(_ASN_LO, _ASN_HI)
+    dst_asn = core_asn
+    while dst_asn == core_asn:
+        dst_asn = rng.randint(_ASN_LO, _ASN_HI)
+
+    loop_block = f"10.{rng.randint(1, 250)}.{rng.randint(0, 250)}"
+    link_block = (192, rng.randint(0, 250), rng.randint(0, 250))
+
+    cust = rng.choice(_CUSTOMER_POOLS).format(c=rng.randint(0, 250))
+    customer_net = ".".join(cust.split(".")[:3])
+
+    base = rng.choice(_NAME_POOLS)
+    name = {role: f"{base}{i}" for i, role in enumerate(_ROLES, start=1)}
+
+    # Drawn LAST so the addressing above is byte-stable: per-seed strict-gap MEDs
+    # (value-memorization fix) then the ROLE->POSITION swap (positional-leak fix).
+    meds = _draw_meds(rng)
+    swap = _rp.draw_swap(rng)
+
+    return _Params(core_asn=core_asn, dst_asn=dst_asn, loop_block=loop_block,
+                   link_block=link_block, customer_net=customer_net, name=name,
+                   meds=meds, swap=swap)
+
+
+# --------------------------------------------------------------------------- #
+# Topology builder. Links (lower role first): src-way, src-alt, way-dst, alt-dst.
+# --------------------------------------------------------------------------- #
+@dataclass
+class _Topo:
+    params: _Params
+    spec: MedFarAsSpec
+    name: dict[str, str]
+    loopback: dict[str, str]
+    ip: dict[tuple[str, str], str]
+    customer_prefix: str
+    customer_ip: str
+
+
+def _build_topo(spec: MedFarAsSpec, params: _Params) -> _Topo:
+    rid_index = _rp.swapped_rid_index(
+        {"src": 1, "way": 2, "alt": 3, "dst": 4}, params.swap, ("way", "alt"))
+    name = _rp.swapped_names(dict(params.name), params.swap, ("way", "alt"))
+    loopback = {r: f"{params.loop_block}.{rid_index[r]}" for r in _ROLES}
+
+    b, c0, c1 = params.link_block
+
+    def addr(off: int) -> str:
+        return f"{b}.{c0}.{c1}.{off}"
+
+    # /30 link supernets carved by the (swapped) physical slot so the waypoint role's
+    # loopback octet, name suffix and link IPs move per seed.
+    lo_role = "way" if rid_index["way"] == 2 else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
+    ip: dict[tuple[str, str], str] = {
+        ("src", lo_role): addr(1), (lo_role, "src"): addr(2),
+        ("src", hi_role): addr(5), (hi_role, "src"): addr(6),
+        (lo_role, "dst"): addr(9), ("dst", lo_role): addr(10),
+        (hi_role, "dst"): addr(13), ("dst", hi_role): addr(14),
+    }
+
+    customer_prefix = f"{params.customer_net}.0/24"
+    customer_ip = f"{params.customer_net}.1"
+
+    return _Topo(params=params, spec=spec, name=name, loopback=loopback, ip=ip,
+                 customer_prefix=customer_prefix, customer_ip=customer_ip)
+
+
+# --------------------------------------------------------------------------- #
+# Config text rendering (FRR / CUMULUS_CONCATENATED, frr 10.6.1 — the verified
+# baseline_ospf_core6 / generator_igp_metric format). OSPF on the src<->egress links +
+# loopbacks (EQUAL cost, left default); eBGP /30s NOT in OSPF; iBGP over loopbacks;
+# egress next-hop rewrite via the honored outbound route-map; the MED knob lives on dst.
+# --------------------------------------------------------------------------- #
+_FRR_VER = "frr version 10.6.1"
+
+
+def _iface_header(node_name: str, loopback: str,
+                  eth: list[tuple[str, str]], dummies: list[tuple[str, str]]) -> str:
+    """The /etc/network/interfaces-style block (CUMULUS_CONCATENATED header)."""
+    ib = [
+        node_name, "",
+        "# This file describes the network interfaces",
+        "auto lo", "iface lo inet loopback", f"    address {loopback}/32", "",
+    ]
+    for iface, ipm in eth + dummies:
+        ib += [f"auto {iface}", f"iface {iface} inet static", f"    address {ipm}", ""]
+    ib += ["# ports.conf --", ""]
+    return "\n".join(ib) + "\n"
+
+
+def _frr_header(node_name: str) -> str:
+    return (
+        f"{_FRR_VER}\n"
+        "frr defaults traditional\n"
+        f"hostname {node_name}\n"
+        "service integrated-vtysh-config\n!\n"
+        "ip forwarding\n!\n"
+    )
+
+
+def _ospf_iface(iface: str, ipm: str) -> str:
+    # EQUAL cost on both src<->egress links (default cost, no explicit `ip ospf cost`):
+    # the IGP-metric step is a deliberate tie so the MED step decides above it.
+    return (f"interface {iface}\n ip address {ipm}\n"
+            " ip ospf area 0\n ip ospf network point-to-point\n!\n")
+
+
+def _plain_iface(iface: str, ipm: str) -> str:
+    return f"interface {iface}\n ip address {ipm}\n!\n"
+
+
+def _src_config(topo: _Topo) -> str:
+    """src: OSPF to way+alt (EQUAL cost), iBGP to both egresses, NO BGP policy. The two
+    received customer paths are attribute-tied except for dst's MED -> MED decides."""
+    p = topo.params
+    lo = topo.loopback["src"]
+    eth = [("eth1", f"{topo.ip[('src', 'way')]}/30"),
+           ("eth2", f"{topo.ip[('src', 'alt')]}/30")]
+    body = [_iface_header(topo.name["src"], lo, eth, []), _frr_header(topo.name["src"])]
+    body.append(f"interface lo\n ip address {lo}/32\n ip ospf area 0\n!\n")
+    body.append(_ospf_iface("eth1", f"{topo.ip[('src', 'way')]}/30"))
+    body.append(_ospf_iface("eth2", f"{topo.ip[('src', 'alt')]}/30"))
+    body.append(f"router ospf\n ospf router-id {lo}\n passive-interface lo\n!\n")
+    body.append(f"router bgp {p.core_asn}\n")
+    body.append(f" bgp router-id {lo}\n")
+    body.append(f" neighbor {topo.loopback['way']} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.loopback['way']} update-source lo\n")
+    body.append(f" neighbor {topo.loopback['alt']} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.loopback['alt']} update-source lo\n")
+    body.append(" !\n address-family ipv4 unicast\n")
+    body.append(f"  network {lo}/32\n")
+    body.append(" exit-address-family\n!\nline vty\n!\n")
+    return "".join(body)
+
+
+def _egress_config(topo: _Topo, role: str) -> str:
+    """way or alt: OSPF to src (EQUAL-cost metric link), eBGP to dst (no OSPF), iBGP to
+    src + the other egress with an OUTBOUND ``set ip next-hop <own-lo>`` toward src (the
+    Batfish-honored next-hop-self form). Re-advertises dst's customer /24 to src; the
+    MED dst attached is carried unchanged on the iBGP advertisement (no MED policy here).
+    """
+    p = topo.params
+    other = "alt" if role == "way" else "way"
+    lo = topo.loopback[role]
+    eth = [("eth1", f"{topo.ip[(role, 'src')]}/30"),
+           ("eth2", f"{topo.ip[(role, 'dst')]}/30")]
+    body = [_iface_header(topo.name[role], lo, eth, []), _frr_header(topo.name[role])]
+    body.append(f"interface lo\n ip address {lo}/32\n ip ospf area 0\n!\n")
+    body.append(_ospf_iface("eth1", f"{topo.ip[(role, 'src')]}/30"))    # OSPF underlay
+    body.append(_plain_iface("eth2", f"{topo.ip[(role, 'dst')]}/30"))  # eBGP link, no OSPF
+    body.append(f"route-map NHS_OUT permit 10\n set ip next-hop {lo}\n!\n")
+    body.append(f"router ospf\n ospf router-id {lo}\n passive-interface lo\n!\n")
+    body.append(f"router bgp {p.core_asn}\n")
+    body.append(f" bgp router-id {lo}\n")
+    # iBGP to src (next-hop-self via route-map) and to the other egress.
+    body.append(f" neighbor {topo.loopback['src']} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.loopback['src']} update-source lo\n")
+    body.append(f" neighbor {topo.loopback[other]} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.loopback[other]} update-source lo\n")
+    # eBGP to dst (directly-connected link IP).
+    body.append(f" neighbor {topo.ip[('dst', role)]} remote-as {p.dst_asn}\n")
+    body.append(" !\n address-family ipv4 unicast\n")
+    body.append(f"  network {lo}/32\n")
+    body.append(f"  neighbor {topo.loopback['src']} route-map NHS_OUT out\n")
+    body.append(" exit-address-family\n!\nline vty\n!\n")
+    return "".join(body)
+
+
+def _dst_config(topo: _Topo, *, med_way: int, med_alt: int) -> str:
+    """dst: the customer AS, eBGP to way + alt, originates the customer /24 + its lo.
+    Attaches a per-neighbour OUTBOUND MED (the KNOB) via ``set metric`` route-maps.
+    NEVER emits ``bgp deterministic-med`` (unparseable) nor ``always-compare-med`` (the
+    FRR dialect drops it to a no-op): the strict MED VALUE gap alone gives one best path
+    each snapshot — evaluated identically by the real-router same-first-AS comparator
+    (this single-provider topology satisfies the gate) and by Batfish's unconditional
+    MED comparator (no same-AS gate; see batfish_verified_facts.md)."""
+    p = topo.params
+    lo = topo.loopback["dst"]
+    # dst's two egress-facing interfaces are ordered by the PHYSICAL slot of the egress
+    # role (slot-2 role -> eth1, slot-3 role -> eth2); and each outbound MED route-map is
+    # named after the EGRESS NODE NAME (which is swapped per seed), so neither the eth
+    # index nor the route-map name reveals which side is the waypoint.
+    lo_role = "way" if topo.loopback["way"].endswith(".2") else "alt"
+    hi_role = "alt" if lo_role == "way" else "way"
+    med_of = {"way": med_way, "alt": med_alt}
+    rm_name = {r: f"MED_TO_{topo.name[r].upper()}_OUT" for r in ("way", "alt")}
+    eth = [("eth1", f"{topo.ip[('dst', lo_role)]}/30"),
+           ("eth2", f"{topo.ip[('dst', hi_role)]}/30")]
+    dummies = [("dum0", f"{topo.customer_ip}/24")]
+    body = [_iface_header(topo.name["dst"], lo, eth, dummies), _frr_header(topo.name["dst"])]
+    body.append(f"interface lo\n ip address {lo}/32\n!\n")
+    body.append(_plain_iface("eth1", f"{topo.ip[('dst', lo_role)]}/30"))
+    body.append(_plain_iface("eth2", f"{topo.ip[('dst', hi_role)]}/30"))
+    body.append(f"interface dum0\n ip address {topo.customer_ip}/24\n!\n")
+    # The two outbound MED route-maps (the KNOB), one per egress, named per egress node.
+    for r in (lo_role, hi_role):
+        body.append(f"route-map {rm_name[r]} permit 10\n set metric {med_of[r]}\n!\n")
+    body.append(f"router bgp {p.dst_asn}\n")
+    body.append(f" bgp router-id {lo}\n")
+    body.append(f" neighbor {topo.ip[(lo_role, 'dst')]} remote-as {p.core_asn}\n")
+    body.append(f" neighbor {topo.ip[(hi_role, 'dst')]} remote-as {p.core_asn}\n")
+    body.append(" !\n address-family ipv4 unicast\n")
+    body.append(f"  network {lo}/32\n")
+    body.append(f"  network {topo.customer_prefix}\n")
+    for r in (lo_role, hi_role):
+        body.append(f"  neighbor {topo.ip[(r, 'dst')]} route-map {rm_name[r]} out\n")
+    body.append(" exit-address-family\n!\nline vty\n!\n")
+    return "".join(body)
+
+
+def _baseline_configs(topo: _Topo) -> dict[str, str]:
+    return {
+        topo.name["src"]: _src_config(topo),
+        topo.name["way"]: _egress_config(topo, "way"),
+        topo.name["alt"]: _egress_config(topo, "alt"),
+        topo.name["dst"]: _dst_config(topo, med_way=topo.params.meds.way_pre,
+                                     med_alt=topo.params.meds.alt_pre),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# The change: a single ``set metric`` edit on dst. Zero provider-namespace surface.
+# --------------------------------------------------------------------------- #
+def _med_rm_name(topo: _Topo, role: str) -> str:
+    """The outbound MED route-map name for an egress role -- named after that egress's
+    (swapped) NODE NAME, so the name carries no waypoint/bypass label info."""
+    return f"MED_TO_{topo.name[role].upper()}_OUT"
+
+
+def _med_edit_plan(topo: _Topo) -> tuple[str, int, int, int, int]:
+    """Return (edited_role, before_med, after_med, post_med_way, post_med_alt) per
+    (knob, effect), using the per-seed MEDs. The edited LOGICAL role's route-map is the
+    one touched; its physical name varies per seed (see _med_rm_name)."""
+    m = topo.params.meds
+    knob, effect = topo.spec.knob, topo.spec.effect
+    if knob == "raise_way":
+        if effect == "bypass":      # raise the way-side MED above alt_pre (alt now wins)
+            return "way", m.way_pre, m.way_raised, m.way_raised, m.alt_pre
+        else:                       # raise the alt-side (already losing) -> way still wins
+            return "alt", m.alt_pre, m.alt_raised, m.way_pre, m.alt_raised
+    else:  # lower_alt
+        if effect == "bypass":      # lower the alt-side MED below way_pre (alt now wins)
+            return "alt", m.alt_pre, m.alt_lowered, m.way_pre, m.alt_lowered
+        else:                       # lower the way-side (already winning) -> way still wins
+            return "way", m.way_pre, m.way_lowered, m.way_lowered, m.alt_pre
+
+
+def _apply_change(topo: _Topo) -> str:
+    m = topo.params.meds
+    before = _dst_config(topo, med_way=m.way_pre, med_alt=m.alt_pre)
+    role, before_med, after_med, post_way, post_alt = _med_edit_plan(topo)
+    rm = _med_rm_name(topo, role)
+    old = f"route-map {rm} permit 10\n set metric {before_med}\n"
+    new = f"route-map {rm} permit 10\n set metric {after_med}\n"
+    after = _dst_config(topo, med_way=post_way, med_alt=post_alt)
+
+    if old not in before:
+        raise RuntimeError(
+            f"change anchor {old!r} not found for {topo.spec.dims_label()} on dst "
+            f"(seed render drift)"
+        )
+    if before.replace(old, new, 1) != after:
+        raise RuntimeError(
+            f"change for {topo.spec.dims_label()} is not a single-line MED swap"
+        )
+    return _unified(before, after, topo.name["dst"])
+
+
+def _unified(before: str, after: str, node: str) -> str:
+    diff = difflib.unified_diff(
+        before.splitlines(), after.splitlines(),
+        fromfile=f"{node}.conf", tofile=f"{node}.conf", lineterm="",
+    )
+    patch = "\n".join(diff) + "\n"
+    if apply_unified_diff(before, patch) != after:
+        raise RuntimeError(f"generated patch for {node} does not round-trip")
+    return patch
+
+
+# --------------------------------------------------------------------------- #
+# Prose (CONFIG EDIT + INTENT ONLY — never the routing OUTCOME). bypass and no_op are
+# phrased the SAME way: the prose names only WHICH outbound MED route-map is edited and
+# the value, never whether the best path / chosen egress moves.
+# --------------------------------------------------------------------------- #
+def _description(topo: _Topo) -> str:
+    dst = topo.name["dst"]
+    # The edited route-map's NAME is whichever egress's (swapped) node name applies this
+    # seed; frm/to are the per-seed MED values. Neither reveals the waypoint side.
+    role, frm, to, _pw, _pa = _med_edit_plan(topo)
+    rmap = _med_rm_name(topo, role)
+    return (
+        f"On `{dst}` (AS{topo.params.dst_asn}), change the outbound eBGP route-map "
+        f"`{rmap}` so its `set metric` value goes from {frm} to {to} (a one-line "
+        f"`set metric` value edit). See the diff."
+    )
+
+
+_INTENTS_TEXT = (
+    "All traffic from `{src}` to the customer space {cust} MUST transit the "
+    "inspection node `{way}`. The customer prefix MUST remain reachable. The "
+    "operator's stated goal for the change is to tune the inbound MED the customer "
+    "advertises on its uplinks for this destination."
+)
+
+
+# --------------------------------------------------------------------------- #
+# Scenario assembly.
+# --------------------------------------------------------------------------- #
+def _scenario_from_spec(spec: MedFarAsSpec, seed: int) -> Scenario:
+    params = _draw_params(seed)
+    topo = _build_topo(spec, params)
+    pre = _baseline_configs(topo)
+    patch = _apply_change(topo)
+
+    src, way, alt, dst = (topo.name[r] for r in _ROLES)
+    cust = topo.customer_prefix
+    cust_host = topo.customer_ip + "/32"
+
+    # D2 watch set: customer /24 + the three provider loopbacks (negative controls).
+    watched = [f"{topo.loopback[r]}/32" for r in ("src", "way", "alt")] + [cust]
+
+    # D3 proof: src must STILL reach the customer host post-change (off-path).
+    reach = [(src, cust_host)]
+
+    # D4 waypoint intent: src->customer MUST transit `way`. Probe the /32 host.
+    waypoint_intents = [(src, cust_host, way)]
+
+    # D10 intent invariant: the SAME waypoint, restated as a kind="waypoint"
+    # IntentInvariant so the intent dimension fires alongside the path dimension.
+    intent_invariants = [
+        IntentInvariant(
+            kind="waypoint", src=src, dst=cust_host, waypoint=way,
+            note=f"med-far-as quiet reroute: src->{cust} must transit {way}",
+        )
+    ]
+
+    name = f"gen_med_far_as_{spec.dims_label()}_s{seed}"
+    description = _description(topo)
+    intents_text = _INTENTS_TEXT.format(src=src, cust=cust, way=way)
+
+    node_rng = random.Random(f"med_far_as_nodes_{seed}")
+    nodes = [src, way, alt, dst]
+    node_rng.shuffle(nodes)
+
+    return Scenario(
+        name=name,
+        nodes=nodes,
+        pre_configs=pre,
+        change_target=dst,
+        patch=patch,
+        description=description,
+        intents_text=intents_text,
+        watched_prefixes=watched,
+        reachability_flows=reach,
+        waypoint_intents=waypoint_intents,
+        intent_invariants=intent_invariants,
+        # bypass = the trap (D4+D10 fire while sessions/prefixes/reachability survive);
+        # no_op  = genuinely inert (empty GT), so is_trap stays False.
+        is_trap=(spec.effect == "bypass"),
+        provenance="templated",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Public API (mirrors generator_igp_metric).
+# --------------------------------------------------------------------------- #
+def generate_med_far_as_instance(seed: int, spec: Optional[MedFarAsSpec] = None) -> Scenario:
+    """Emit ONE Family-2 med-far-as instance. With ``spec=None`` the axis tuple is
+    chosen deterministically from ``seed`` (so a bare call walks the space)."""
+    if spec is None:
+        specs = enumerate_specs()
+        spec = specs[seed % len(specs)]
+    return _scenario_from_spec(spec, seed)
+
+
+def _selected_specs(include_noop: bool) -> list[MedFarAsSpec]:
+    specs = enumerate_specs()
+    if include_noop:
+        return specs
+    return [s for s in specs if s.effect != "no_op"]
+
+
+def generate_med_far_as_all_combos(*, seed: int = 0, include_noop: bool = True) -> list[Scenario]:
+    """One instance per structural combo (4 with no_op, 2 without), distinct seeds."""
+    specs = _selected_specs(include_noop)
+    return [_scenario_from_spec(spec, seed + i) for i, spec in enumerate(specs)]
+
+
+def generate_med_far_as_suite(n: int, *, base_seed: int = 0, include_noop: bool = True) -> list[Scenario]:
+    """Emit ``n`` DISTINCT instances with unique ids (walk the axis space, distinct
+    seed per position; wrap with a fresh seed offset when ``n`` exceeds the combo
+    count, giving the same structure a NEW randomized instance)."""
+    specs = _selected_specs(include_noop)
+    out: list[Scenario] = []
+    for i in range(n):
+        spec = specs[i % len(specs)]
+        out.append(_scenario_from_spec(spec, base_seed + i))
+    return out

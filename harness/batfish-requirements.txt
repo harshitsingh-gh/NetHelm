@@ -105,3 +105,7 @@ webcolors==25.10.0
 webencodings==0.5.1
 websocket-client==1.9.0
 wheel==0.47.0
+
+# Added 2026-06-08: the oracle imports netbrace (pydantic models); the
+# batfish venv was missing this. Canonical venv is harness/venvs/nethelm.
+pydantic>=2

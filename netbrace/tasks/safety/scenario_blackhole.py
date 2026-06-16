@@ -1,19 +1,44 @@
-"""The `blackhole` scenario (D7): a recursive-next-hop blackhole on square4.
+"""The `blackhole` scenario: removing a "redundant" static route severs a
+loopback-sourced iBGP session AND blackholes the data plane (square4).
 
 Scenario S15/S08-flavored (paper/refs/blast_radius_scenario_catalog.md). Reuses
 the verified square4 baseline (iBGP full mesh + static routes to loopbacks). The
-change removes r1's static route to r4's loopback (10.0.0.4/32). r1's only BGP
-path to 10.0.0.4/32 has next-hop 10.0.0.4 (next-hop-self from r4), which is
-resolved *via that very static route* — so removing it makes the next-hop
-unresolvable and r1 silently drops traffic to 10.0.0.4 (Batfish disposition
-NO_ROUTE). Other routers are unaffected.
+change removes r1's static route to r4's loopback (10.0.0.4/32).
 
-The point of D7 over D3: not just "r1 cannot reach 10.0.0.4" (reachability) but
+That single static is LOAD-BEARING in two ways the "looks redundant" framing
+hides:
+  1. Data plane: r1's BGP path to 10.0.0.4/32 has next-hop 10.0.0.4 (next-hop-self
+     from r4), resolved recursively *via that very static*. Removing it makes the
+     next-hop unresolvable.
+  2. Control plane: 10.0.0.4 is ALSO the peering address of r1's loopback-sourced
+     iBGP session to r4. Removing the static means r1 can no longer reach the
+     peer, so the r1<->r4 iBGP session TEARS DOWN (both endpoints report it lost).
+
+So the TRUE blast radius is MULTI-DIMENSIONAL — NOT a quiet single-node blackhole
+with other routers unaffected (verified live; see HANDOFF.md "verified facts"):
+  * D1 = {r1's session to r4, r4's session to r1}  (the iBGP session, both ends = 2)
+  * D2 = r1 loses 10.0.0.4/32 from its RIB (static gone, BGP next-hop unresolvable)
+  * D3 = r1 -> 10.0.0.4 unreachable
+  * D7 = NO_ROUTE blackhole localized at r1
+
+The point of D7 OVER D3: not just "r1 cannot reach 10.0.0.4" (reachability) but
 the *classification* (a silent blackhole, not a filtered/denied drop) and the
-*localization* (the dropping node is r1). The change reads like a harmless
-cleanup of a "redundant" static route.
+*localization* (the dropping node is r1). The change reads like a harmless cleanup
+of a "redundant" static route — the trap is that the static is load-bearing for
+BOTH the recursive next-hop AND the iBGP peering.
 
-Verified live: PRE r1->10.0.0.4 ACCEPTED; POST r1->10.0.0.4 NO_ROUTE at r1.
+DELIBERATE D3+D7 OVERLAP (disclosed): the registration declares the SAME flow set
+as both reachability_flows (D3) and forwarding_flows (D7), so the single
+r1->10.0.0.4 NO_ROUTE is intentionally scored under BOTH dimensions to demonstrate
+D7's added classification/localization value. This is the OPPOSITE choice from
+`ipc_scenario` (scenarios.py), which declares D3-only precisely to avoid
+double-counting. Read the two together as a contrast — NOT as evidence of two
+independent damage events here.
+
+Verified live: PRE r1->10.0.0.4 ACCEPTED; POST r1->10.0.0.4 NO_ROUTE at r1, AND
+the r1<->r4 iBGP session drops at both endpoints (D1=2). Earlier prose / catalog
+under-reported this as a quiet "D7, D3" event with "other routers unaffected" —
+that was wrong: r4 loses its session to r1, and D1/D2 fire.
 """
 
 from __future__ import annotations

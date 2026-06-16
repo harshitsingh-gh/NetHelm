@@ -27,6 +27,8 @@ def flat_prediction_json(ext: ExtendedBlastRadius) -> str:
         "filter_deltas": [m.model_dump() for m in e.filter_deltas],
         "forwarding_anomalies": [m.model_dump() for m in e.forwarding_anomalies],
         "scale_violations": [m.model_dump() for m in e.scale_violations],
+        "bgp_withdrawals": [m.model_dump() for m in e.bgp_withdrawals],
+        "intent_violations": [m.model_dump() for m in e.intent_violations],
     }
     return json.dumps(obj, sort_keys=True, indent=2)
 
