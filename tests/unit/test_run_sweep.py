@@ -5,7 +5,11 @@ modal_by_class < oracle_ceiling, naive_session_loss trips false_session_alarm.
 
 Also includes the M-A grader-routing gate: oracle_ceiling under the reroute sweep
 must score NetBrace-Detect = 1.0 / Youden_J = 1.0, which requires the semantic
-grader to be wired in-sweep for reroute instances (hidden /32 probes)."""
+grader to be wired in-sweep for reroute instances (hidden /32 probes).
+
+Provenance gate (B1/M1): run_manifest.json must be emitted by every sweep run with
+git_commit, engine.batfish_image, prompt_hash.sha256, instance_ids, and per-sample
+usd in results.jsonl."""
 
 import importlib.util
 import sys
@@ -126,6 +130,76 @@ def test_sweep_both_conditions_produce_separate_rows(tmp_path, monkeypatch):
     assert "fake @ no_tools" in summary["models"]
     assert "fake @ tools" in summary["models"]
     assert summary["manifest"]["conditions"] == ["no_tools", "tools"]
+
+
+def test_run_manifest_provenance(tmp_path, monkeypatch):
+    """B1/M1 gate: every sweep run must emit a standalone run_manifest.json with the
+    required provenance fields.  Also verifies per-sample cost is materialised in
+    results.jsonl (requirement M3: tokens_in/tokens_out/usd on every model row)."""
+    monkeypatch.chdir(tmp_path)
+    args = run_sweep.argparse.Namespace(
+        models="fake", samples=2, split="templated", n_generated=26,
+        seed=0, temperature=0.0, oracle="fake", host="127.0.0.1",
+        condition="no_tools", templated_set="reroutes",
+        coarsen_class=True, exclude="", bypass_fraction=0.5, det_runs=2,
+        limit=0, include="", max_output_tokens=4000)
+    run_sweep.run_sweep(args)
+
+    run_dirs = sorted((tmp_path / "runs").iterdir())
+    assert run_dirs, "run_sweep must create a runs/ sub-directory"
+    run_dir = run_dirs[-1]
+
+    # 1. run_manifest.json exists as a standalone file.
+    manifest_path = run_dir / "run_manifest.json"
+    assert manifest_path.exists(), "run_manifest.json must be written alongside summary.json"
+
+    import json
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # 2. Schema version.
+    assert manifest.get("schema_version") == "netbrace.sweep_manifest.v1", (
+        f"schema_version={manifest.get('schema_version')!r}")
+
+    # 3. Git provenance — git_commit must be present (may be UNKNOWN in CI without git,
+    #    but the KEY must always exist).
+    assert "git_commit" in manifest, "manifest must carry git_commit"
+    assert "git_dirty" in manifest, "manifest must carry git_dirty"
+
+    # 4. Engine fingerprint — batfish_image key must be present (value may be
+    #    UNKNOWN when docker is absent, e.g. in unit-test CI, but the key must exist).
+    engine = manifest.get("engine", {})
+    assert "batfish_image" in engine, (
+        f"manifest.engine must have batfish_image; got keys={list(engine)}")
+    assert "pybatfish_version" in engine, (
+        f"manifest.engine must have pybatfish_version; got keys={list(engine)}")
+
+    # 5. Prompt hash — sha256 of the prompt template.
+    ph = manifest.get("prompt_hash", {})
+    assert "sha256" in ph, f"manifest.prompt_hash must have sha256; got {ph}"
+    assert ph["sha256"] and not ph["sha256"].startswith("UNKNOWN"), (
+        f"prompt_hash.sha256 should be a real hash; got {ph['sha256']!r}. "
+        "Check that netbrace/prompts/safety_extended_v0.md exists.")
+
+    # 6. Instance IDs list.
+    assert "instance_ids" in manifest, "manifest must carry instance_ids"
+    assert isinstance(manifest["instance_ids"], list) and manifest["instance_ids"], (
+        "instance_ids must be a non-empty list")
+
+    # 7. Per-sample cost materialised in results.jsonl (M3).
+    results_path = run_dir / "results.jsonl"
+    assert results_path.exists(), "results.jsonl must exist"
+    model_rows = [
+        json.loads(line)
+        for line in results_path.open(encoding="utf-8")
+        if json.loads(line).get("kind") == "model"
+    ]
+    assert model_rows, "results.jsonl must contain at least one model row"
+    for row in model_rows:
+        # cost dict is spread into the row via **d where d["cost"] = {tokens_in, ...}
+        assert "cost" in row, f"model row missing cost dict: {list(row)}"
+        cost = row["cost"]
+        assert "tokens_in" in cost and "tokens_out" in cost and "usd" in cost, (
+            f"cost dict missing fields: {list(cost)}")
 
 
 def test_reroute_sweep_semantic_grader_in_sweep(tmp_path, monkeypatch):

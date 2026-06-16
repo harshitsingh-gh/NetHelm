@@ -43,11 +43,23 @@ def test_shut_neighbor_removes_three_lines():
     assert t.baseline.configs[node].count("neighbor ") - after.count("neighbor ") == 3
 
 
-def test_remove_network_removes_origination():
-    t = next(t for t in generate(GenerationSpec(count=16)) if t.intent == "remove_network")
+def test_remove_network_mutation_works_when_explicitly_requested():
+    # remove_network is OPT-IN ONLY (removed from the default — freeze-review B3: it is a
+    # v0-oracle false-quiet). The mutation itself still works when requested EXPLICITLY
+    # (for a future D9-aware oracle); pass it explicitly here.
+    t = next(t for t in generate(GenerationSpec(count=16,
+                                                intents=["shut_neighbor", "remove_network"]))
+             if t.intent == "remove_network")
     node = t.change.target_nodes[0]
     after = apply_unified_diff(t.baseline.configs[node], t.change.patch)
     assert after.count("network 10.0.0") == t.baseline.configs[node].count("network 10.0.0") - 1
+
+
+def test_remove_network_not_in_default_intents():
+    # B3 fix: the DEFAULT v0 generator no longer emits remove_network (the false-quiet that
+    # the v0 main-RIB-only oracle grades as an empty blast radius).
+    assert "remove_network" not in GenerationSpec().intents
+    assert all(t.intent != "remove_network" for t in generate(GenerationSpec(count=16)))
 
 
 def test_all_tasks_validate_internally():

@@ -12,6 +12,12 @@ v0 intents implemented here (the "easy two" from plan.md §11):
   * shut_neighbor : remove a node's three `neighbor <peer>` lines (drops the
     session in Batfish; see plan.md §14 Q2 — removal is the Batfish-safe form).
   * remove_network: remove a node's `network 10.0.0.X/32` origination line.
+    ⚠️ OPT-IN ONLY — removed from the default intents (freeze-review B3): under the v0
+    main-RIB-only oracle it is a FALSE-QUIET (the static backup masks the BGP-RIB
+    withdrawal, so the oracle reports an empty blast radius and rewards the wrong answer).
+    Grade prefix-withdrawal via the D9 path (ExtendedOracle with bgp_watch_prefixes, e.g.
+    the `ipc` scenario). The committed v0 suite is shut_neighbor-only
+    (tests/unit/test_v0_remove_network_guard.py pins this).
 
 A later model can add intents (deny_prefix, change_local_pref trap, ...) by
 adding a mutation function and an entry to INTENTS. Keep each mutation a pure
@@ -39,7 +45,9 @@ from netbrace.topology.patches import apply_unified_diff
 @dataclass
 class GenerationSpec:
     count: int = 20
-    intents: list[str] = field(default_factory=lambda: ["shut_neighbor", "remove_network"])
+    # remove_network is OPT-IN only — it is a v0-oracle FALSE-QUIET (freeze-review B3),
+    # so it is NOT in the default; request it explicitly only with a D9-aware oracle.
+    intents: list[str] = field(default_factory=lambda: ["shut_neighbor"])
 
 
 # --------------------------------------------------------------------------- #

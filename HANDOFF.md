@@ -14,8 +14,8 @@
 cd ~/projects/NetHelm
 git checkout brainstorming-session              # PR #1; not yet merged to main
 source harness/venvs/nethelm/bin/activate
-pip install -e ".[oracle]"                       # pybatfish + pandas
-python -m pytest tests/unit -q                   # must print "91 passed"
+bash scripts/repro_setup.sh                      # builds harness/venvs/nethelm/ (idempotent)
+python -m pytest tests/unit -q                   # must print "889 passed, 5 skipped"
 # Batfish must be up on 127.0.0.1:9996/9997 for any oracle/run command.
 python scripts/run_extended_scenario.py --scenario blackhole   # zero-API smoke
 ```
@@ -34,7 +34,7 @@ results). This file only tracks status + remaining work.
    `graders/sets.py`, `graders/safety.py`, `evals/parser.py`,
    `topology/patches.py`, `tasks/safety/baseline_square4.py`,
    `tasks/safety/generator.py`, anything under `tests/unit/` that already passes.
-2. **Run `pytest tests/unit -q` after every change.** Keep it green (91+).
+2. **Run `pytest tests/unit -q` after every change.** Keep it green (889 passed, 5 skipped).
 3. **Reuse the schemas / jsonio helpers.** Never `json.dump` a model by hand.
 4. **Small, boring functions.** ~30 lines.
 5. **No paid model API without human approval.** Always `--limit 1` / one call
@@ -51,12 +51,13 @@ results). This file only tracks status + remaining work.
   `grade`, `report`). Committed v0 suite + oracle ground truth in
   `tasks/safety/v0/`. See `docs/project_guide.md`.
 
-### Multi-dimensional (D4–D8) — built; D4/D5/D7 oracle-backed
+### Multi-dimensional (D4–D10) — built; D4/D5/D7–D10 oracle-backed; D6 deferred
 | File | Role |
 |---|---|
-| `core/dimensions.py` | 5 new typed elements + `ExtendedBlastRadius` (composes v0 BlastRadius over 8 types) |
+| `core/dimensions.py` | 7 new typed elements + `ExtendedBlastRadius` (composes v0 BlastRadius over D1–D10) |
 | `graders/extended.py` | `grade_extended()` + `ExtendedScoreRecord` (reuses frozen `sets.py`) |
-| `batfish/extended_oracle.py` | `ExtendedOracle.compute(scenario)` — **unified**, all dims on one snapshot pair; D1–D5 + D7 implemented |
+| `graders/semantic_sets.py` | semantic grader for D4/D7/D10-intent where exact-key match is too strict |
+| `batfish/extended_oracle.py` | `ExtendedOracle.compute(scenario)` — **unified**, all dims on one snapshot pair; D1–D5, D7–D10 implemented; D6 returns [] (needs vendor config) |
 | `tasks/safety/scenarios.py` | `Scenario` dataclass + `REGISTRY` (waypoint, blackhole, ecmp) |
 | `tasks/safety/baseline_waypoint4.py` | D4 topology (2 disjoint paths) |
 | `tasks/safety/baseline_ecmp4.py` | D5 topology (2 equal-cost paths) |
@@ -70,7 +71,8 @@ results). This file only tracks status + remaining work.
 Tests: `tests/unit/test_dimensions.py`, `test_extended_grader.py`,
 `test_extended_parser.py`, `test_fake_extended.py`, `test_waypoint_baseline.py`,
 `test_blackhole_scenario.py`, `test_ecmp_scenario.py`,
-`test_scenarios_registry.py`. **52 → 91 green.**
+`test_scenarios_registry.py`, plus generator family tests for quiet-reroute
+scenarios. **889 passed, 5 skipped.**
 
 Verified facts (don't re-derive):
 - Batfish column names match `oracle.py` (`Node`, `Remote_IP`, `VRF`,

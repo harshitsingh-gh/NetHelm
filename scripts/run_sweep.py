@@ -34,8 +34,10 @@ Examples
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,6 +101,75 @@ MODEL_REGISTRY = {
         "id": "kimi-k2.6", "base_url": "https://api.moonshot.ai/v1",
         "key_env": "KIMI_API_KEY", "price_in": 0.6, "price_out": 3.4, "paid": True},
 }
+
+# The prompt template whose sha256 is recorded in every run manifest so the
+# exact contract sent to every model is auditable without re-running anything.
+_PROMPT_MD = Path(__file__).resolve().parents[1] / "netbrace/prompts/safety_extended_v0.md"
+
+
+def _git_provenance() -> dict:
+    """Return git commit hash + dirty flag. Degrades to UNKNOWN if git is absent."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+            cwd=Path(__file__).resolve().parents[1],
+        ).stdout.strip() or "UNKNOWN"
+        porcelain = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+            cwd=Path(__file__).resolve().parents[1],
+        ).stdout.strip()
+        return {"git_commit": commit, "git_dirty": bool(porcelain)}
+    except Exception as e:  # noqa: BLE001 — git absent in some CI environments
+        return {"git_commit": f"UNKNOWN ({e})", "git_dirty": None}
+
+
+def _engine_fingerprint() -> dict:
+    """Pin the engine stack (Batfish image digest + pybatfish version).
+
+    Mirrors scripts/verify_determinism.py::_engine_fingerprint — kept in sync
+    so the sweep manifest and the determinism report use the same probe logic.
+    Degrades gracefully when docker/pybatfish is absent (CI / unit-test runs).
+    """
+    fp: dict = {}
+    digest = ""
+    for cmd in (
+        ["docker", "inspect", "--format", "{{index .RepoDigests 0}}",
+         "batfish/allinone:nethelm"],
+        ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", "batfish"],
+    ):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            digest = (out.stdout or "").strip()
+            if digest:
+                break
+        except Exception:  # noqa: BLE001 — docker absent in CI
+            continue
+    fp["batfish_image"] = digest or "UNKNOWN (docker inspect failed)"
+    try:
+        import pybatfish  # noqa: PLC0415
+        fp["pybatfish_version"] = getattr(pybatfish, "__version__", "unknown")
+    except Exception as e:  # noqa: BLE001
+        fp["pybatfish_version"] = f"unknown ({e})"
+    return fp
+
+
+def _prompt_template_hash() -> dict:
+    """sha256 over the raw bytes of the prompt contract (safety_extended_v0.md).
+
+    Every model call in the sweep uses _prompt_for -> _build_prompt which reads
+    this file; pinning its hash makes the exact contract reproducible without
+    re-running anything.  Returns {"prompt_file": path_str, "sha256": hex}.
+    """
+    try:
+        raw = _PROMPT_MD.read_bytes()
+        return {
+            "prompt_file": str(_PROMPT_MD),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    except Exception as e:  # noqa: BLE001 — file missing in edge cases
+        return {"prompt_file": str(_PROMPT_MD), "sha256": f"UNKNOWN ({e})"}
 
 
 # --------------------------------------------------------------------------- #
@@ -974,10 +1045,17 @@ def run_sweep(args) -> dict:
 
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    # Canonical provenance artifact — the single source of truth for auditing a run.
+    # Written as a SEPARATE file (not only embedded in summary.json) so audit tooling
+    # can load it without parsing the full summary. This resolves blocker B1 / M1:
+    # the paper claims "per-call costs and the Batfish digest are logged in every run
+    # manifest" — this is now true for every run that calls run_sweep.
+    (out_dir / "run_manifest.json").write_text(
+        json.dumps(summary["manifest"], indent=2) + "\n", encoding="utf-8")
     table = render_table(summary, model_rows, splits)
     (out_dir / "summary.md").write_text(table, encoding="utf-8")
     print(table)
-    print(f"\nwrote {out_dir}/  (results.jsonl, summary.json, summary.md)")
+    print(f"\nwrote {out_dir}/  (results.jsonl, summary.json, summary.md, run_manifest.json)")
     if any(MODEL_REGISTRY[m]["paid"] for m in models):
         print(f"[cost] estimated spend this run: ${total_cost:.4f}")
     return summary
@@ -1003,10 +1081,63 @@ def _baseline_pred(bname, inst, truth, modal_by_class) -> KeySets:
 
 
 def _manifest(args, models, instances, total_cost, ts, quarantined=()) -> dict:
+    """Build the canonical sweep run manifest.
+
+    This is the SWEEP manifest — a richer, sweep-specific provenance record that
+    lives as ``run_manifest.json`` in the run directory (written by ``run_sweep``
+    after this function returns).  It is also embedded verbatim in ``summary.json``
+    under the ``"manifest"`` key for backwards-compatibility with ``render_table``
+    and existing downstream tooling.
+
+    It is DISTINCT from ``netbrace.storage.run_store.write_run_manifest``, which
+    writes a ``RunManifest`` (``nethelm.run_manifest.v0``) scoped to a SINGLE
+    v0-suite task run (one scenario, one model call).  The two are not
+    interchangeable and must not be conflated.  See run_store.py for details.
+
+    Fields recorded here (all required for a paid run to be auditably reproducible):
+        schema_version          — "netbrace.sweep_manifest.v1"
+        timestamp               — run start, UTC strftime "%Y%m%d_%H%M%S"
+        command / argv          — sys.argv so the exact invocation is recoverable
+        git_commit              — HEAD sha1 (or UNKNOWN if git absent)
+        git_dirty               — bool: working tree had uncommitted changes
+        engine                  — Batfish image digest + pybatfish version
+        prompt_hash             — sha256 of safety_extended_v0.md (the prompt contract)
+        models                  — registry entries for every model used
+        temperature             — resolved per-model (None = not sent)
+        instance_ids            — sorted list of every instance graded
+        n_instances / n_templated / n_grounded
+        samples_per_instance    — N samples per (instance, model)
+        conditions              — ["no_tools"] / ["tools"] / both
+        oracle / oracle_det_runs_in_sweep
+        coarsen_class
+        excluded_scenarios      — sorted list
+        n_quarantined / quarantined
+        estimated_cost_usd      — sum of per-sample usd (cross-check against results.jsonl)
+        aggregation             — free-text description of the two-stage aggregation
+        grader_routing          — per-record grader provenance
+        templated_set           — reroutes / legacy / both
+        bypass_fraction         — reroute bypass:no_op mix
+        max_output_tokens       — output-token budget for anthropic/vllm paths
+    """
+    import sys as _sys
+    git = _git_provenance()
     return {
+        "schema_version": "netbrace.sweep_manifest.v1",
         "timestamp": ts,
+        # Full argv so the run is re-runnable with a copy-paste.
+        "argv": _sys.argv,
         "command": vars(args),
+        # Reproducibility provenance (B1 / M1 freeze-readiness blockers).
+        "git_commit": git["git_commit"],
+        "git_dirty": git["git_dirty"],
+        "engine": _engine_fingerprint(),
+        "prompt_hash": _prompt_template_hash(),
+        # Model fleet: registry entries carry pinned id, prices, paid flag.
         "models": {m: MODEL_REGISTRY[m] for m in models},
+        # per-model resolved temperature (None = not sent; reasoning-model contract)
+        "temperature": {m: resolve_temperature(m, args.temperature) for m in models},
+        # Instance enumeration — the EXACT set graded, sorted for stable diffs.
+        "instance_ids": sorted(i.instance_id for i in instances),
         "n_instances": len(instances),
         "n_templated": sum(1 for i in instances if i.split == "templated"),
         "n_grounded": sum(1 for i in instances if i.split == "grounded"),
@@ -1020,8 +1151,6 @@ def _manifest(args, models, instances, total_cost, ts, quarantined=()) -> dict:
             x.strip() for x in getattr(args, "exclude", "").split(",") if x.strip()),
         "n_quarantined": len(quarantined),
         "quarantined": [q["instance"] for q in quarantined],
-        # per-model resolved temperature (None = not sent; reasoning-model contract)
-        "temperature": {m: resolve_temperature(m, args.temperature) for m in models},
         "estimated_cost_usd": round(total_cost, 6),
         "aggregation": "scenario-level two-stage (per-instance mean over N samples, "
                        "then mean+/-std across instances); splits reported separately; "
@@ -1035,6 +1164,9 @@ def _manifest(args, models, instances, total_cost, ts, quarantined=()) -> dict:
             "all_other_instances": "grade_keysets",
             "reroute_detect_grader": "grade_keysets_semantic",
         },
+        "templated_set": getattr(args, "templated_set", "reroutes"),
+        "bypass_fraction": getattr(args, "bypass_fraction", 0.5),
+        "max_output_tokens": getattr(args, "max_output_tokens", 4000),
     }
 
 
