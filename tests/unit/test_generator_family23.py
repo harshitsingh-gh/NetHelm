@@ -200,34 +200,60 @@ def test_origin_code_both_twins_name_customer_prefix():
                         or "redistribute connected" in l) for l in pm), spec.dims_label()
 
 
-def test_origin_code_both_twins_carry_set_origin_value_distinguishes():
-    """HELD-OUT-FIX (set-origin keyword leak): BOTH twins now carry an explicit `set origin`
-    clause, so a grep-for-`set origin` probe can no longer separate trap from calibration
-    (it was bal-acc 1.0 before: only the no_op pinned origin). The discriminator is the
-    origin VALUE relative to the PRE origin (way PRE=igp, alt PRE=incomplete):
-      * bypass pins the OPPOSITE of PRE (flip -> ORIGIN tie collapses -> latent MED decides);
-      * no_op  pins the SAME as PRE (hold -> best path unchanged -> empty GT).
-    Telling them apart requires reading the PRE origination method (routing reasoning), not a
-    keyword grep."""
+def test_origin_code_twins_are_diff_shape_identical_set_origin_clause_decides():
+    """2-FEATURE-LEAK FIX (the (diff-SHAPE x set-origin-literal) diagonal, 2026-06-16): the
+    bypass and no_op twins of a given KNOB now produce a BYTE-IDENTICAL diff (a CUST_PL seq
+    renumber + the SAME flipped `set origin` token), so NO single feature AND NO 2-feature
+    XOR of the diff text separates trap from calibration. The ONLY difference is WHICH
+    route-map clause the rewritten origin governs:
+      * bypass edits CLAUSE 10 (the customer /24 clause, matched by CUST_PL) -> the customer
+        copy's ORIGIN flips -> ORIGIN tie collapses -> latent MED decides -> reroute;
+      * no_op  edits CLAUSE 20 (the INERT decoy clause, matched by DECOY_PL whose /24 has no
+        static) -> no routing effect -> empty GT.
+    Telling them apart requires TRACING the route-map (which clause governs the customer copy
+    on the inspection path) -- genuine best-path reasoning, not a keyword/value/shape grep."""
     mod = generator_origin_code
-    for spec in mod.enumerate_specs():
-        scn = mod.generate_origin_code_instance(600, spec=spec)
-        added = [l[1:] for l in _diff_pm_lines(scn) if l.startswith("+")]
-        has_set_origin = any("set origin" in l for l in added)
-        assert has_set_origin, (spec.dims_label(), "both twins must carry set origin")
-        pre = "igp" if spec.knob == "way_to_incomplete" else "incomplete"
+    for knob in ("way_to_incomplete", "alt_to_igp"):
+        bypass = mod.generate_origin_code_instance(
+            600, spec=mod.OriginCodeSpec(knob, "bypass"))
+        no_op = mod.generate_origin_code_instance(
+            600, spec=mod.OriginCodeSpec(knob, "no_op"))
+        pm_b = _diff_pm_lines(bypass)
+        pm_n = _diff_pm_lines(no_op)
+        # (a) BOTH carry a `set origin` +/- line and a CUST_PL renumber that names the /24.
+        for pm, eff in ((pm_b, "bypass"), (pm_n, "no_op")):
+            assert any("set origin" in l for l in pm), (knob, eff, "no set origin in diff")
+            assert any("CUST_PL" in l and "/24" in l for l in pm), (knob, eff, "no CUST_PL /24")
+        # (b) the DIFF TEXT is byte-identical between the twins (the symmetrization).
+        assert pm_b == pm_n, (knob, "bypass and no_op diffs are NOT shape-identical", pm_b, pm_n)
+        # (c) the flipped `set origin` token is the SAME for both effects (== flip of PRE);
+        #     the token therefore carries NO label info -- only the clause does.
+        pre = "igp" if knob == "way_to_incomplete" else "incomplete"
         flip = "incomplete" if pre == "igp" else "igp"
-        want = flip if spec.effect == "bypass" else pre   # bypass flips, no_op holds
-        assert any(f"set origin {want}" in l for l in added), (spec.dims_label(), want)
-        # and the WRONG value must NOT appear (so the value is unambiguous)
-        wrong = pre if spec.effect == "bypass" else flip
-        assert not any(f"set origin {wrong}" in l for l in added), (spec.dims_label(), wrong)
+        added_b = [l[1:] for l in pm_b if l.startswith("+")]
+        assert any(f"set origin {flip}" in l for l in added_b), (knob, flip)
+        assert not any(f"set origin {pre}" in l for l in
+                       [l[1:] for l in pm_b if l.startswith("+")]), (knob, "pre token re-added")
+        # (d) the DISCRIMINATOR is in the POST config, not the diff: the bypass changes the
+        #     CUSTOMER clause's origin (clause 10) while the no_op leaves it at PRE.
+        def _cust_clause_origin(scn):
+            post = scn.post_configs()[scn.change_target].splitlines()
+            # clause 10 is the first route-map clause; its `set origin` governs the customer /24.
+            for i, l in enumerate(post):
+                if l.strip() == "route-map REDIST_CUST permit 10":
+                    for l2 in post[i:i + 5]:
+                        m = re.search(r"set origin (\w+)", l2)
+                        if m:
+                            return m.group(1)
+            return None
+        assert _cust_clause_origin(bypass) == flip, (knob, "bypass must flip the customer clause")
+        assert _cust_clause_origin(no_op) == pre, (knob, "no_op must hold the customer clause")
 
 
 def test_origin_code_bypass_relocates_med_not_removed():
-    """audit-M4: the bypass must NOT delete the MED. The `set metric <m>` must still be
-    present in the POST config (relocated from the outbound SET_MED route-map into the
-    redistribution route-map), so the advertised MED is preserved across the swap."""
+    """audit-M4: the bypass must NOT delete the MED. The `set metric <m>` lives in the
+    REDIST_CUST route-map PRE *and* POST (the decisive edit touches only the prefix-list seq
+    and the `set origin` token), so the advertised MED is preserved across the ORIGIN flip."""
     mod = generator_origin_code
     for spec in mod.enumerate_specs():
         if spec.effect != "bypass":
