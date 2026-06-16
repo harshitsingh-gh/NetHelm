@@ -217,15 +217,30 @@ _REROUTE_PREFIXES = tuple(p for (_m, _f, p) in scenarios.REROUTE_GENERATORS)
 
 # Families HELD OUT of the NetBrace-Detect HEADLINE because a zero-reasoning mechanical probe
 # separates their bypass/no_op twins (they remain scored in the reroute_detect_all13
-# diagnostic). origin_code is held out: its ORIGIN tiebreak edits DIFFERENT route-map clauses
-# (the customer clause for the bypass, an inert decoy clause for the no_op) at different
-# positions, so its unified-diff GEOMETRY is asymmetric (bypass = 1 hunk / 18 lines, no_op =
-# 2 hunks / 20 lines) — a single-feature probe on n_hunks separates it at 1.0 (the gate-3
-# finding; the +/- changed lines ARE symmetric, the hunk structure is not). The other 12
-# families are verified leak-free under single AND 2-feature probes INCLUDING diff-geometry
-# (n_hunks, n_total_lines) by tests/unit/test_reroute_probe_leak.py. A future symmetrization
-# of origin_code's generator (single edit locus, position-balanced) would remove it here.
-REROUTE_DIFFSHAPE_LEAKY = frozenset({"origin_code"})
+# diagnostic). Two surfaces, two families:
+#   • origin_code — its ORIGIN tiebreak edits DIFFERENT route-map clauses (the customer clause
+#     for the bypass, an inert decoy clause for the no_op) at different positions, so its
+#     unified-diff GEOMETRY is asymmetric (bypass = 1 hunk / 18 lines, no_op = 2 hunks / 20
+#     lines) — a single-feature probe on n_hunks separates it at 1.0 (the gate-3 finding; the
+#     +/- changed lines ARE symmetric, the hunk structure is not).
+#   • far_as_prepend / remove_dead_prepend — both AS-path-prepend families. The no_op twin
+#     restates an ADJACENT route-map whose pre-existing (longer/shorter) as-path-prepend chain
+#     falls in the diff's 3-line CONTEXT window, so the context-line length tracks the label:
+#     for far_as_prepend the frozen seed-0 bypass twins' ctx_max ∈ [43,65] are DISJOINT from the
+#     no_op twins' [76,87] and a context-line-length threshold separates them at balanced-accuracy
+#     1.0; remove_dead_prepend is the same mechanism (the prepend COUNT, which *is* the routing
+#     signal, drives the patch character length) and the armed guard flags it on the 2-feature
+#     context-XOR pass (obs 0.875 > null 0.850 at n=40). The +/- changed lines and the hunk
+#     geometry are symmetric — the leak is in the unchanged CONTEXT, a surface the pre-audit guard
+#     did not model. Intrinsic to the prepend mechanism, so neither can be made a context-symmetric
+#     twin without a generator rewrite — exactly the origin_code situation. (2026-06-16
+#     freeze-certainty-audit finding.)
+# The remaining 10 families are verified leak-free under single AND 2-feature probes INCLUDING
+# diff-geometry (n_hunks, n_total_lines) AND context-line / raw-patch char length, by
+# tests/unit/test_reroute_probe_leak.py (cross-fit + permutation-null calibrated). A future
+# context-symmetric rewrite of any held-out generator would let it rejoin the headline (the guard
+# test flips automatically).
+REROUTE_DIFFSHAPE_LEAKY = frozenset({"origin_code", "far_as_prepend", "remove_dead_prepend"})
 
 
 def _is_reroute_instance(instance_id: str) -> bool:
@@ -1269,11 +1284,13 @@ def render_table(summary: dict, models: list[str], splits: list[str]) -> str:
                        "no_op_FAR = false-alarm rate on the diff-shape-identical no_op "
                        "calibration twins. THIS is the reroute headline — macro_f1_damage "
                        "is gameable for this split (it drops the no_op twins). Headline is "
-                       "MACRO-averaged over the 12 leak-free families (equal family weight; "
-                       "each verified <= permutation-null p99 against single, 2-feature AND "
-                       "diff-geometry probes, test_reroute_probe_leak.py); origin_code is "
-                       "HELD OUT (asymmetric diff hunk-geometry) and scored only in "
-                       "reroute_detect_all13. Grader: grade_keysets_semantic (reroute instances) "
+                       "MACRO-averaged over the leak-free families (equal family weight; "
+                       "each verified <= permutation-null p99 against single, 2-feature, "
+                       "diff-geometry AND context-line/raw-char probes, "
+                       "test_reroute_probe_leak.py); origin_code (asymmetric diff hunk-geometry) "
+                       "and far_as_prepend / remove_dead_prepend (context-line-length leak) are "
+                       "HELD OUT and scored only in reroute_detect_all13. "
+                       "Grader: grade_keysets_semantic (reroute instances) "
                        "— D4/D10 truth is hidden /32 probes; config-visible prefix credit "
                        "is required for a valid score. Provenance: manifest[grader_routing].")
             out.append("")

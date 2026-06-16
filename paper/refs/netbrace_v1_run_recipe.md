@@ -14,18 +14,19 @@ drift warning before running anything paid.
 ## ⚠️ The drift this recipe fixes (read first)
 
 `scripts/run_sweep.py`'s CLI default is **already** `--templated-set reroutes` — the
-v1 direction: the 13-family quiet-reroute split, `origin_code` held out of the
-headline, leaving **12 headline families**. **But** the paper's older protocol
-paragraph still describes the **legacy-48** templated split (`ipc/leak/lp/scale`,
-`--templated-set legacy`). The two do not match. Consequences:
+v1 direction: the 13-family quiet-reroute split, **3 families held out** of the
+headline (`origin_code`, `far_as_prepend`, `remove_dead_prepend`), leaving **10 headline
+families**. **But** the paper's older protocol paragraph still describes the
+**legacy-48** templated split (`ipc/leak/lp/scale`, `--templated-set legacy`). The two
+do not match. Consequences:
 
 1. **Paid runs MUST pass `--templated-set reroutes` explicitly.** Never rely on the
    default. Defaults are an editable surface; an explicit flag is auditable and
    survives a future default change. (Same for `--exclude blackhole` and
    `--n-generated 52`.)
 2. **The paper protocol section is STALE and must be updated** to the
-   reroute-headline-12 recipe. **→ flagged for the user below (FLAG-B); not auto-edited
-   — the `.tex` is owned by another agent.**
+   reroute-headline (10-family) recipe. **→ flagged for the user below (FLAG-B); not
+   auto-edited — the `.tex` is owned by another agent.**
 
 If a reviewer re-runs the paper as literally written (legacy split) they get a
 DIFFERENT dataset than the frozen manifest. The manifest + this recipe are the
@@ -38,17 +39,20 @@ binding definition of v1; the `.tex` must be brought into line with them.
 | Dataset version | Split | N inst | Families | Grader | Role |
 |---|---|---|---|---|---|
 | `netbrace-v1-grounded11` | grounded | 11 | 11 | `grade_keysets` (exact) | grounded incident anchors (blackhole excluded) |
-| `netbrace-v1-reroute-headline12` | templated | 48 | 12 | `grade_keysets_semantic` | **the headline** (`reroute_detect`, Youden's J) |
+| `netbrace-v1-reroute-headline` | templated | 40 | 10 | `grade_keysets_semantic` | **the headline** (`reroute_detect`, Youden's J) |
 | `netbrace-v1-reroute-all13-diag` | templated | 52 | 13 | `grade_keysets_semantic` | diagnostic superset (`reroute_detect_all13`) |
 
 - **Reroute split**: `scenarios.build_generated_suite_reroutes(52, base_seed=0,
   include_noop=True)` → 13 families × 4 instances = **52** (26 bypass + 26 no_op,
   the 50/50 anti-gaming calibration; balanced-accuracy metric, so do **not** skew it).
-- **`origin_code` is HELD OUT of the headline**: its bypass/no_op twins are separated
-  by a zero-reasoning `n_hunks` diff-geometry probe, so it is **diagnostic-only**
-  (still scored in `reroute_detect_all13`, never in the headline). The other 12
-  families are leak-free under single + 2-feature probes incl. diff-geometry
-  (`tests/unit/test_reroute_probe_leak.py`).
+- **Three families are HELD OUT of the headline** (diagnostic-only — still scored in
+  `reroute_detect_all13`, never in the headline): `origin_code` (zero-reasoning `n_hunks`
+  diff-geometry probe separates its twins at 1.0), and `far_as_prepend` +
+  `remove_dead_prepend` (AS-path-prepend families whose unchanged adjacent prepend chain
+  in the diff CONTEXT window makes context-line length track the label — the 2026-06-16
+  freeze-certainty-audit finding). The other **10 families** are leak-free under single +
+  2-feature probes incl. diff-geometry AND context-line / raw-patch char length
+  (`tests/unit/test_reroute_probe_leak.py`, cross-fit + permutation-null calibrated).
 - **Grounded split**: `scenarios.build` over `sorted(scenarios.REGISTRY)` minus
   `{"blackhole"}` (the `--exclude blackhole` static-route sanity anchor).
 - **Pinned oracle**: `batfish/allinone:nethelm` @ `sha256:09817554db90`. v1 ground
@@ -127,7 +131,7 @@ setsid harness/venvs/nethelm/bin/python scripts/run_sweep.py \
 
 - `--samples 5` satisfies the N≥5 stochastic-model rule.
 - The headline figure is the templated split's **`reroute_detect`** (NetBrace-Detect /
-  Youden's J over the 12 leak-free families), NOT `macro_f1_damage` (gameable on the
+  Youden's J over the 10 leak-free families), NOT `macro_f1_damage` (gameable on the
   reroute split — an always-fire predictor scores 1.0 because the damage-only macro
   drops the no_op twins). `reroute_detect_all13` is the diagnostic.
 - The run writes `runs/sweep_<ts>/`: `summary.{json,md}`, `results.jsonl`,
@@ -148,7 +152,7 @@ At N=5 × 8 models × 63 instances the closed-model spend is modest, but do the
 
 - `oracle_digest = sha256:09817554db90` (the manifest stamps it per instance).
 - `--templated-set reroutes` (explicit, in the run manifest's `args`).
-- The dataset version name (`netbrace-v1-reroute-headline12` for the headline).
+- The dataset version name (`netbrace-v1-reroute-headline` for the headline).
 - Grader route per instance (manifest `grader` field; mirrored into each result row).
 - `completeness.complete == true`.
 
@@ -162,13 +166,16 @@ At N=5 × 8 models × 63 instances the closed-model spend is modest, but do the
   determinism gate's default also matches. No code change required, but **always pass
   the flag explicitly** in any committed/reported run command.
 - **FLAG-B (paper, REQUIRES the user / .tex owner):** the paper's protocol section
-  still describes the **legacy-48 templated split** (`ipc/leak/lp/scale`). It is
-  STALE. It must be rewritten to the **reroute-headline-12** recipe:
-  - templated split = 13 quiet-reroute families, `origin_code` held out → **12 headline
-    families / 48 headline instances** (52 in the all-13 diagnostic);
-  - 26 bypass + 26 no_op (50/50), scored by `reroute_detect` (Youden's J), NOT
-    `macro_f1_damage`;
+  describes the templated split; the binding definition is now the **reroute-headline
+  (10-family)** recipe — re-confirm the `.tex` matches:
+  - templated split = 13 quiet-reroute families, **3 held out** (`origin_code`,
+    `far_as_prepend`, `remove_dead_prepend`) → **10 headline families / 40 headline
+    instances** (52 in the all-13 diagnostic);
+  - 26 bypass + 26 no_op overall (50/50), the headline 20 bypass + 20 no_op, scored by
+    `reroute_detect` (Youden's J), NOT `macro_f1_damage`;
   - grounded split = 11 (blackhole excluded), exact grader;
   - oracle pinned at `sha256:09817554db90`.
   **I did NOT edit `paper/draft/netbrace_tr.tex` — it is owned by another agent / the
-  user.** This is the one item that needs a human action to fully close M5.
+  user.** Commit `018fe89` synced it to the (then) 12-family flow; it now needs the
+  10-family / 3-held-out update. This is the one item that needs a human action to fully
+  close M5.

@@ -7,7 +7,9 @@
       "fn": "scenarios.build over sorted(scenarios.REGISTRY)"
     },
     "held_out_families": [
-      "origin_code"
+      "far_as_prepend",
+      "origin_code",
+      "remove_dead_prepend"
     ],
     "reroute": {
       "base_seed": 0,
@@ -19,10 +21,10 @@
   "counts": {
     "grounded": 11,
     "reroute_bypass": 26,
-    "reroute_diagnostic_only": 4,
-    "reroute_families_headline": 12,
+    "reroute_diagnostic_only": 12,
+    "reroute_families_headline": 10,
     "reroute_families_total": 13,
-    "reroute_headline": 48,
+    "reroute_headline": 40,
     "reroute_no_op": 26,
     "reroute_total": 52,
     "v1_total_instances": 63
@@ -52,7 +54,9 @@
     },
     "netbrace-v1-reroute-all13-diag": {
       "diagnostic_only_families": [
-        "origin_code"
+        "far_as_prepend",
+        "origin_code",
+        "remove_dead_prepend"
       ],
       "families": [
         "agg_collapse",
@@ -129,24 +133,24 @@
       "scored_as": "reroute_detect_all13 (diagnostic superset; NOT the headline)",
       "split": "templated"
     },
-    "netbrace-v1-reroute-headline12": {
+    "netbrace-v1-reroute-headline": {
       "families": [
         "agg_collapse",
         "clause_fallthrough",
         "community_lp",
         "community_trigger",
-        "far_as_prepend",
         "igp_metric",
         "igp_summary",
         "med_far_as",
         "nexthop_elim",
         "redistribute_ad",
-        "remove_dead_prepend",
         "rr_bestpath"
       ],
       "grader": "grade_keysets_semantic",
       "held_out_families": [
-        "origin_code"
+        "far_as_prepend",
+        "origin_code",
+        "remove_dead_prepend"
       ],
       "instance_ids": [
         "gen_agg_collapse_ms25-bypass_s0",
@@ -165,10 +169,6 @@
         "gen_community_trigger_depref_way-no_op_s30022",
         "gen_community_trigger_prefer_alt-bypass_s30023",
         "gen_community_trigger_prefer_alt-no_op_s30024",
-        "gen_far_as_prepend_d1-bypass_s40028",
-        "gen_far_as_prepend_d1-no_op_s40029",
-        "gen_far_as_prepend_d2-bypass_s40030",
-        "gen_far_as_prepend_d2-no_op_s40031",
         "gen_igp_metric_lower_alt-bypass_s50037",
         "gen_igp_metric_lower_alt-no_op_s50038",
         "gen_igp_metric_raise_way-bypass_s50035",
@@ -189,17 +189,13 @@
         "gen_redistribute_ad_enable_redist-no_op_s100071",
         "gen_redistribute_ad_scope_redist-bypass_s100072",
         "gen_redistribute_ad_scope_redist-no_op_s100073",
-        "gen_remove_dead_prepend_alt_inbound-bypass_s110077",
-        "gen_remove_dead_prepend_alt_inbound-no_op_s110078",
-        "gen_remove_dead_prepend_dst_outbound-bypass_s110079",
-        "gen_remove_dead_prepend_dst_outbound-no_op_s110080",
         "gen_rr_bestpath_lower_alt-bypass_s120086",
         "gen_rr_bestpath_lower_alt-no_op_s120087",
         "gen_rr_bestpath_raise_way-bypass_s120084",
         "gen_rr_bestpath_raise_way-no_op_s120085"
       ],
-      "n_families": 12,
-      "n_instances": 48,
+      "n_families": 10,
+      "n_instances": 40,
       "scored_as": "reroute_detect (NetBrace-Detect, Youden's J)",
       "split": "templated"
     }
@@ -633,11 +629,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "far_as_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_far_as_prepend_d1-bypass_s40028",
       "is_trap": true,
       "oracle_digest": "sha256:09817554db90",
@@ -648,11 +644,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "far_as_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_far_as_prepend_d1-no_op_s40029",
       "is_trap": false,
       "oracle_digest": "sha256:09817554db90",
@@ -663,11 +659,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "far_as_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_far_as_prepend_d2-bypass_s40030",
       "is_trap": true,
       "oracle_digest": "sha256:09817554db90",
@@ -678,11 +674,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "far_as_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_far_as_prepend_d2-no_op_s40031",
       "is_trap": false,
       "oracle_digest": "sha256:09817554db90",
@@ -1053,11 +1049,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "remove_dead_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_remove_dead_prepend_alt_inbound-bypass_s110077",
       "is_trap": true,
       "oracle_digest": "sha256:09817554db90",
@@ -1068,11 +1064,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "remove_dead_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_remove_dead_prepend_alt_inbound-no_op_s110078",
       "is_trap": false,
       "oracle_digest": "sha256:09817554db90",
@@ -1083,11 +1079,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "remove_dead_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_remove_dead_prepend_dst_outbound-bypass_s110079",
       "is_trap": true,
       "oracle_digest": "sha256:09817554db90",
@@ -1098,11 +1094,11 @@
     },
     {
       "base_seed": 0,
-      "diagnostic_only": false,
+      "diagnostic_only": true,
       "family": "remove_dead_prepend",
       "grader": "grade_keysets_semantic",
-      "headline_note": "leak-free under single + 2-feature probes incl diff-geometry (test_reroute_probe_leak) -> in the NetBrace-Detect headline",
-      "in_headline": true,
+      "headline_note": "diff-geometry-leaky (origin_code): a single-feature n_hunks probe separates its bypass/no_op twins -> held out of the headline, scored only in the reroute_detect_all13 diagnostic",
+      "in_headline": false,
       "instance_id": "gen_remove_dead_prepend_dst_outbound-no_op_s110080",
       "is_trap": false,
       "oracle_digest": "sha256:09817554db90",

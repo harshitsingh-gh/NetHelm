@@ -166,9 +166,10 @@ def _dataset_versions(reroute: list[dict], grounded: list[dict]) -> dict:
     """The three NAMED v1 dataset versions + their instance-id manifests.
 
     * netbrace-v1-grounded11        — the 11 grounded instances (blackhole excluded).
-    * netbrace-v1-reroute-headline12 — the 12 leak-free reroute FAMILIES (origin_code
-      held out). The instances that compose the headline.
-    * netbrace-v1-reroute-all13-diag — all 13 reroute families (origin_code included);
+    * netbrace-v1-reroute-headline  — the leak-free reroute FAMILIES (origin_code +
+      far_as_prepend held out). The instances that compose the headline. The family/instance
+      COUNT is derived (not hard-coded in the name) so it never drifts from the held-out set.
+    * netbrace-v1-reroute-all13-diag — all 13 reroute families (held-out families included);
       the DIAGNOSTIC superset (reroute_detect_all13).
     """
     head = [r for r in reroute if r["in_headline"]]
@@ -186,7 +187,7 @@ def _dataset_versions(reroute: list[dict], grounded: list[dict]) -> dict:
             "excluded_registry_keys": sorted(GROUNDED_EXCLUDE),
             "instance_ids": g_ids,
         },
-        "netbrace-v1-reroute-headline12": {
+        "netbrace-v1-reroute-headline": {
             "split": "templated",
             "grader": GRADER_REROUTE,
             "scored_as": "reroute_detect (NetBrace-Detect, Youden's J)",
@@ -305,8 +306,9 @@ def main() -> None:
     c = manifest["counts"]
     print(f"wrote {out}")
     print(f"  grounded-11        : {c['grounded']} instances")
-    print(f"  reroute-headline-12: {c['reroute_headline']} instances "
-          f"({c['reroute_families_headline']} families; origin_code held out)")
+    print(f"  reroute-headline   : {c['reroute_headline']} instances "
+          f"({c['reroute_families_headline']} families; "
+          f"held out: {', '.join(sorted(REROUTE_DIFFSHAPE_LEAKY))})")
     print(f"  reroute-all-13-diag: {c['reroute_total']} instances "
           f"({c['reroute_families_total']} families)")
     print(f"  v1 total           : {c['v1_total_instances']} instances "

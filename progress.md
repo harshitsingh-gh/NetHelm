@@ -1081,3 +1081,39 @@ before any number ships); a second design-lens review of the loud half (#4, sing
 net-new missing-class generators (#17 — RPKI/ROV grounding written + indexed, generator unbuilt).
 **Distinctness (#9):** the quiet half is ~6 decision surfaces × 2 axes, not 13 mechanisms — record as
 "decision-step diversity," and count square4 as 1 mechanism × 12 permutations, IF/when they enter the TR.
+
+---
+
+## 2026-06-16 — Freeze-certainty audit + remediation → v1 is freeze-ready (10-family headline)
+
+An independent 7-dimension adversarial freeze audit (then double-verified per finding) returned
+**DO_NOT_FREEZE** on ONE blocker: AS-path-prepend families leaked their bypass/no_op label through
+the diff's **unchanged CONTEXT-line length** — a surface the leak guard never modeled (it kept only
+`+/-` lines and normalized away exactly the prepend-count length difference). `far_as_prepend`'s
+frozen-set twins were CTX-disjoint (bypass ctx_max∈[43,65] vs no_op[76,87]) → balanced-accuracy 1.0
+by a zero-reasoning length threshold. The other six audit dimensions came back CLEAN (oracle GT
+oracle-computed not asserted, metric non-gameable, pipeline E2E sound, manifest byte-reproducible,
+scenarios real, novelty intact). Full verdict: `temporary/v1_freeze_certainty_audit_VERDICT_*.md`.
+
+**Remediation (this commit):**
+- **Held out the two prepend families** + origin_code → `REROUTE_DIFFSHAPE_LEAKY =
+  {origin_code, far_as_prepend, remove_dead_prepend}`. Headline = **10 families / 40 instances**
+  (20 bypass + 20 no_op); all 13 remain in the `reroute_detect_all13` diagnostic.
+- **Armed the leak guard** (`test_reroute_probe_leak.py`) with RAW context-inclusive length features
+  (`ctx_max_len`/`ctx_total_len`/`raw_patch_chars`) under a **threshold rule grammar** (it was
+  equality-only — useless on a near-continuous feature), closing the leak CLASS, not just the family.
+- **Hardened the cross-fit split**: `_stratified` now seeded-shuffles within each label before the
+  even/odd interleave (a deterministic positional split is non-exchangeable against a periodic
+  generator and can manufacture/mask separation — red-team finding).
+- Count-agnostic manifest naming (`netbrace-v1-reroute-headline`, no hard-coded number); recipe + run
+  prose updated to 10-family / 3-held-out.
+- **Verified:** suite 883 pass / 13 skip; armed guard 45 pass / 12 skip (the 3 held-out families skip
+  the per-family probes; the 10 retained pass single + 2-feature incl. context probes); determinism
+  gate 64/64 ≥10× byte-identical (`runs/determinism_20260616_035205`); free fake-oracle E2E sweep
+  `completeness:true`, headline = exactly the 10 leak-free families, every degenerate baseline J≤0
+  (empty 0.5/J0, naive −1.0, syntactic_diff 0.325, oracle_ceiling 1.0); manifest byte-stable on
+  rebuild. Two independent adversaries (red-team + standards) cleared the 10-family design as
+  leak-free and **defensible to spend on**.
+- **Standing (NOT freeze blockers):** κ≥0.7 human labeling (#3, pre-publication); joint headline
+  Youden-J CI (post-hoc on the N≥5 records, zero re-spend); the `.tex` protocol prose → 10-family
+  (FLAG-B). **v1 is freeze-ready; paid sweep recipe in `paper/refs/netbrace_v1_run_recipe.md`.**
